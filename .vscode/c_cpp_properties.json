@@ -1,0 +1,45 @@
+{
+  "version": 4,
+  "configurations": [
+    {
+      "name": "Teensy 4.0",
+      "compileCommands": "${workspaceFolder}/build/compile_commands.json",
+      "includePath": [
+        "${workspaceFolder}",
+        "${workspaceFolder}/**",
+        "${workspaceFolder}/src",
+        "${workspaceFolder}/src/include",
+        "${workspaceFolder}/src/wren",
+        "${workspaceFolder}/src/wren/include",
+        "${workspaceFolder}/src/wren/vm",
+        "${workspaceFolder}/src/wren/optional",
+        "/home/atom/.arduino15/packages/teensy/hardware/avr/1.60.0/cores/teensy4",
+        "/home/atom/.arduino15/packages/teensy/hardware/avr/1.60.0/libraries/**"
+      ],
+      "browse": {
+        "path": [
+          "${workspaceFolder}",
+          "${workspaceFolder}/src",
+          "${workspaceFolder}/src/include",
+          "${workspaceFolder}/src/wren",
+          "${workspaceFolder}/src/wren/include",
+          "/home/atom/.arduino15/packages/teensy/hardware/avr/1.60.0/cores/teensy4",
+          "/home/atom/.arduino15/packages/teensy/hardware/avr/1.60.0/libraries"
+        ],
+        "limitSymbolsToIncludedHeaders": true
+      },
+      "defines": [
+        "ARDUINO",
+        "ARDUINO_TEENSY40",
+        "TEENSYDUINO=160",
+        "F_CPU=600000000",
+        "USB_MIDI_SERIAL", 
+        "LAYOUT_US_ENGLISH"
+      ],
+      "compilerPath": "/home/atom/.arduino15/packages/teensy/tools/teensy-compile/11.3.1/arm/bin/arm-none-eabi-g++",
+      "intelliSenseMode": "linux-gcc-arm",
+      "cStandard": "gnu17",
+      "cppStandard": "gnu++17"
+    }
+  ]
+}

@@ -1,0 +1,7 @@
+build/
+output/
+*.hex
+*.elf
+*.eep
+__pycache__/
+*.pyc

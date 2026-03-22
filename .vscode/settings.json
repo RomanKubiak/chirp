@@ -1,0 +1,23 @@
+{
+    "C_Cpp.default.compileCommands": "${workspaceFolder}/build/compile_commands.json",
+    "C_Cpp.default.compilerPath": "/home/atom/.arduino15/packages/teensy/tools/teensy-compile/11.3.1/arm/bin/arm-none-eabi-g++",
+    "C_Cpp.default.intelliSenseMode": "linux-gcc-arm",
+	"C_Cpp.intelliSenseEngine": "default",
+    "editor.formatOnSave": true,
+    "editor.formatOnPaste": true,
+    "editor.formatOnType": true,
+    "clang-format.fallbackStyle": "Microsoft",
+    "editor.fontFamily": "Fira Code",
+    "clang-tidy.fixOnSave": false,
+	"clang-tidy.executable": "",
+    "makefile.loggingLevel": "Verbose",
+    "editor.defaultFormatter": "ms-vscode.makefile-tools",
+    "editor.defaultFoldingRangeProvider": "ms-vscode.makefile-tools",
+    "editor.insertSpaces": false,
+    "editor.detectIndentation": false,
+	"editor.tabSize": 4,
+	"chat.tools.terminal.autoApprove": {
+		"make": true,
+		"pdftotext": true
+	}
+}
