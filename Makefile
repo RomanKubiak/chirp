@@ -1,6 +1,7 @@
 # Project
-TARGET = merge
-SRC = merge.ino
+TARGET = chirp
+SKETCH_DIR = chirp
+SRC = $(SKETCH_DIR)/chirp.ino
 BUILD = build
 OUTPUT = output
 # Teensy board + USB mode
@@ -32,20 +33,20 @@ $(BUILD)/$(TARGET).hex: $(SRC) | $(BUILD)
 		--build-path $(BUILD) \
 		--output-dir $(OUTPUT) \
 		--build-property "build.extra_flags=$(EXTRA_INCLUDES)" \
-		.
+		$(SKETCH_DIR)
 
 upload:
 	@echo "Press the button on the Teensy, then wait..."
 	teensy_loader_cli --mcu=$(BOARD) -wvrs $(OUTPUT)/$(TARGET).ino.hex
 
-MERGE_FS     = python3 scripts/merge_fs.py -p $(PORT)
+CHIRP_FS     = python3 scripts/chirp_fs.py -p $(PORT)
 SYNC_DIRS    = scripts/ midi_maps/ third_party/wren-json/
 DEVICE_WAIT  = 4
 
 # Upload filesystem assets (scripts/ + midi_maps/) to device over USB serial.
 # Use --delete to purge stale managed files before copying new assets.
 upload-fs:
-	$(MERGE_FS) sync --delete $(SYNC_DIRS)
+	$(CHIRP_FS) sync --delete $(SYNC_DIRS)
 
 # Build firmware, flash it, wait for reboot, then sync filesystem assets.
 upload-all: $(BUILD)/$(TARGET).hex

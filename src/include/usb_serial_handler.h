@@ -111,10 +111,10 @@ public:
     }
 
     // Copy the completed frame out and reset. Returns false if none ready.
-    bool getFrame(MergeFrame &out)
+    bool getFrame(ChirpFrame &out)
     {
         if (state_ != RxState::COMPLETE) return false;
-        memcpy(&out, &frame_, sizeof(MergeFrame));
+        memcpy(&out, &frame_, sizeof(ChirpFrame));
         reset();
         return true;
     }
@@ -126,7 +126,7 @@ public:
               const uint8_t *payload = nullptr, uint16_t payloadLen = 0,
               bool flushNow = false)
     {
-        uint16_t wrote = MergeProtocol::encode(
+        uint16_t wrote = ChirpProtocol::encode(
             sendBuf_, sizeof(sendBuf_), type, seq, payload, payloadLen);
         if (wrote == 0) return false;
         bool ok = (serial_.write(sendBuf_, wrote) == wrote);
@@ -168,7 +168,7 @@ private:
     uint8_t      crcIdx_;
     uint32_t     lastActivity_;
 
-    MergeFrame   frame_;
+    ChirpFrame   frame_;
     uint8_t      sendBuf_[FRAME_OVERHEAD + FRAME_MAX_PAYLOAD];
 };
 

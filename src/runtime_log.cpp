@@ -1,5 +1,5 @@
 #include "runtime_log.h"
-#include "merge_config.h"
+#include "chirp_config.h"
 #include "midi_router.h"
 #include "usb_serial_protocol.h"
 #include "wren_vm.h"

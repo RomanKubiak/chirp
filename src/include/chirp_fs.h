@@ -1,9 +1,9 @@
-#ifndef MERGE_FS_H
-#define MERGE_FS_H
+#ifndef CHIRP_FS_H
+#define CHIRP_FS_H
 
 #include <LittleFS.h>
 
-// ── MergeFS ───────────────────────────────────────────────────────────────────
+// ── ChirpFS ───────────────────────────────────────────────────────────────────
 // Thin subclass of LittleFS_Program that exposes the protected lfs_config
 // fields needed for diagnostics (block geometry, wear-leveling threshold).
 //
@@ -11,7 +11,7 @@
 // swap to LittleFS_SPI (external SD via SPI) only requires changing the base
 // class here, with no changes at call sites.
 // ─────────────────────────────────────────────────────────────────────────────
-class MergeFS : public LittleFS_Program
+class ChirpFS : public LittleFS_Program
 {
 public:
     // Erase block size in bytes (e.g. 4096 for internal program flash).
@@ -26,4 +26,4 @@ public:
     int32_t  fsBlockCycles() const { return configured ? static_cast<int32_t>(config.block_cycles) : 0; }
 };
 
-#endif // MERGE_FS_H
+#endif // CHIRP_FS_H

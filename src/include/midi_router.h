@@ -7,7 +7,7 @@
 #include "wren.hpp"
 
 // ── Serial MIDI port type alias + extern declarations ─────────────────────────
-// Objects are created via MIDI_CREATE_INSTANCE in merge.ino.
+// Objects are created via MIDI_CREATE_INSTANCE in chirp.ino.
 using HardwareSerialMidi = midi::MidiInterface<midi::SerialMIDI<HardwareSerial>>;
 extern HardwareSerialMidi MIDI1, MIDI2, MIDI3, MIDI4, MIDI5;
 

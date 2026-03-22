@@ -7,19 +7,19 @@
 #include "runtime_log.h"
 #include "wren.hpp"
 
-#include "merge_fs.h"
+#include "chirp_fs.h"
 #include <Arduino.h>
 #include <cstring>
 
-// Extern references to globals defined in merge.ino
+// Extern references to globals defined in chirp.ino
 extern USBSerialHandler<usb_serial_class> usbHandler;
 extern ScriptStorage                      scriptStorage;
 extern WrenVM                            *vm;
-extern MergeFS                            internalFlash;
+extern ChirpFS                            internalFlash;
 
 // ── File-scope I/O buffers (avoid stack pressure) ────────────────────────────
 static uint8_t    fsBuf[FRAME_MAX_PAYLOAD];
-static MergeFrame incomingFrame;
+static ChirpFrame incomingFrame;
 static const char kRebootToken[] = "RBT!";
 static constexpr uint8_t kWriteChunkMarker = 0xFF;
 static String writeChunkPath;
@@ -32,7 +32,7 @@ static void fsStatus(uint8_t type, uint8_t seq, uint8_t status, bool flushNow = 
 }
 
 // ── Protocol frame handler ────────────────────────────────────────────────────
-static void handleFrame(const MergeFrame &frame)
+static void handleFrame(const ChirpFrame &frame)
 {
     switch (frame.type)
     {
@@ -252,10 +252,10 @@ static void handleFrame(const MergeFrame &frame)
         drainMidiInputToBuffer();
 
         // 2. Call the user's unload hook then wipe all MIDI listeners.
-        wrenInterpret(vm, "merge_runtime", "Script.callUnload()\nMidi.clearListeners()");
+        wrenInterpret(vm, "chirp_runtime", "Script.callUnload()\nMidi.clearListeners()");
 
         // 3. Interpret the new script.
-        WrenInterpretResult result = interpretWrenWithCapturedError("merge_runtime", source.c_str());
+        WrenInterpretResult result = interpretWrenWithCapturedError("chirp_runtime", source.c_str());
 
         // 4. Replay any MIDI that arrived during interpretation.
         dispatchMidiFromBuffer();

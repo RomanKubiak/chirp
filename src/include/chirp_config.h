@@ -1,5 +1,5 @@
-#ifndef MERGE_CONFIG_H
-#define MERGE_CONFIG_H
+#ifndef CHIRP_CONFIG_H
+#define CHIRP_CONFIG_H
 
 // Set to 1 to enable raw MIDI1 byte logging (shows every byte received)
 #define DEBUG_MIDI1_RAW 0
@@ -20,4 +20,4 @@
 #define WREN_MIN_HEAP_BYTES     (128 * 1024)
 #define WREN_HEAP_GROWTH_PCT    25
 
-#endif // MERGE_CONFIG_H
+#endif // CHIRP_CONFIG_H

@@ -16,12 +16,12 @@ clock_t _times(void *buf) { return 0; }
 #include <cstdio>
 
 // Component headers
-#include "merge_config.h"
+#include "chirp_config.h"
 #include "midi_router.h"
 #include "runtime_log.h"
 #include "wren_host.h"
 #include "usb_frame_handler.h"
-#include "merge_fs.h"
+#include "chirp_fs.h"
 
 // ── Serial MIDI port instances (must live in the sketch) ──────────────────────
 MIDI_CREATE_INSTANCE(HardwareSerial, Serial1, MIDI1);
@@ -40,7 +40,7 @@ USBSerialHandler<usb_serial_class> usbHandler(Serial, &Serial);
 USBSerialHandler<usb_serial_class> usbHandler(Serial, nullptr);
 #endif
 
-MergeFS internalFlash;
+ChirpFS internalFlash;
 ScriptStorage scriptStorage(internalFlash);
 
 // ── Control log sink (needs direct usbHandler access) ────────────────────────

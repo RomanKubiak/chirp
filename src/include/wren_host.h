@@ -6,7 +6,7 @@
 // ── Error capture buffer (written by errorFn, read by handleFrame) ────────────
 extern char gCapturedWrenError[192];
 
-// ── Wren VM callbacks (registered in merge.ino setup via config) ──────────────
+// ── Wren VM callbacks (registered in chirp.ino setup via config) ──────────────
 void writeFn(WrenVM *vm, const char *text);
 void errorFn(WrenVM *vm, WrenErrorType type, const char *module, int line, const char *message);
 

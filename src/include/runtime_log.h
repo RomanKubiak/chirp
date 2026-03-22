@@ -5,7 +5,7 @@
 #include "midi_types.h"
 
 // ── Core log sinks ─────────────────────────────────────────────────────────────
-// sendControlLog is defined in merge.ino (needs direct access to usbHandler).
+// sendControlLog is defined in chirp.ino (needs direct access to usbHandler).
 void sendControlLog(const char *text, bool flushNow = false);
 void logRuntime(const char *text);
 void logSetup(const char *text);

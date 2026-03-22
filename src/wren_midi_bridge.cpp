@@ -17,7 +17,7 @@
 
 namespace
 {
-constexpr const char *kWrenRuntimeModule = "merge_runtime";
+constexpr const char *kWrenRuntimeModule = "chirp_runtime";
 
 const char kEmbeddedWrenMidiRuntime[] = R"WREN(
 

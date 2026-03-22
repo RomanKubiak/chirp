@@ -1,5 +1,5 @@
 #include "wren_host.h"
-#include "merge_config.h"
+#include "chirp_config.h"
 #include "runtime_log.h"
 #include "script_storage.h"
 #include "wren_midi_bridge.h"
@@ -110,7 +110,7 @@ bool initializeWrenRuntime()
     scriptStorage.removeScript(kLegacyRuntimeName);
     scriptStorage.removeScript(kLegacyRuntimeName2);
 
-    WrenInterpretResult result = interpretWrenWithCapturedError("merge_runtime", runtimeText);
+    WrenInterpretResult result = interpretWrenWithCapturedError("chirp_runtime", runtimeText);
     if (result != WREN_RESULT_SUCCESS && fromFlash)
     {
         // Flash version failed — overwrite with embedded and retry.
@@ -118,7 +118,7 @@ bool initializeWrenRuntime()
         if (scriptStorage.isMounted())
             scriptStorage.saveFile(kBuiltinRuntimePath, String(kEmbeddedWrenRuntime));
         gCapturedWrenError[0] = '\0';
-        result = interpretWrenWithCapturedError("merge_runtime", kEmbeddedWrenRuntime);
+        result = interpretWrenWithCapturedError("chirp_runtime", kEmbeddedWrenRuntime);
     }
 
     if (result != WREN_RESULT_SUCCESS)
@@ -185,7 +185,7 @@ bool executeStoredWrenScriptsOnBoot()
             logSetup(msg); allOk = false; continue;
         }
 
-        WrenInterpretResult result = interpretWrenWithCapturedError("merge_runtime", source.c_str());
+        WrenInterpretResult result = interpretWrenWithCapturedError("chirp_runtime", source.c_str());
         if (result != WREN_RESULT_SUCCESS)
         {
             snprintf(msg, sizeof(msg), "[BOOT] Wren failed %s", displayPath.c_str());

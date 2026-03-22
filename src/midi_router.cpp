@@ -1,5 +1,5 @@
 #include "midi_router.h"
-#include "merge_config.h"
+#include "chirp_config.h"
 #include "wren_midi_bridge.h"
 #include "runtime_log.h"
 
@@ -23,7 +23,7 @@ static constexpr uint16_t kMidiStagingSize = 128;
 static MIDIMessage gMidiStagingBuffer[kMidiStagingSize];
 static uint16_t    gMidiStagingCount = 0;
 
-// ── Globals defined in merge.ino, needed here ─────────────────────────────────
+// ── Globals defined in chirp.ino, needed here ─────────────────────────────────
 extern WrenVM *vm;
 
 // ── MidiDeviceManager ─────────────────────────────────────────────────────────

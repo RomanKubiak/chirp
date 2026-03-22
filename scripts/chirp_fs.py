@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-merge_fs.py – Host-side script filesystem tool for the Merge device.
+chirp_fs.py - Host-side script filesystem tool for the Chirp device.
 
 Frame format (matches firmware usb_serial_protocol.h):
   [0xAA][0x55][TYPE:u8][SEQ:u8][LEN:u16-LE][PAYLOAD:LEN bytes][CRC16:u16-LE]
@@ -30,19 +30,19 @@ monitor Options
 
 Examples
 --------
-    merge_fs.py list
-    merge_fs.py reboot
-    merge_fs.py write /scripts/arp.wren arp.wren
-    merge_fs.py read /scripts/arp.wren
-    merge_fs.py run /scripts/arp.wren
-    cat patch.wren | merge_fs.py write /scripts/patch.wren
-    merge_fs.py delete /scripts/arp.wren
-    merge_fs.py stat /scripts/_runtime.wren
-    merge_fs.py monitor                 # Indefinite; Ctrl-C to stop
-    merge_fs.py monitor -d 10           # Monitor for 10 seconds
-    merge_fs.py sync                    # Upload scripts/ and midi_maps/ to device
-    merge_fs.py sync scripts/           # Upload only scripts/
-    merge_fs.py sync scripts/ midi_maps/ --delete  # Sync and remove orphaned device files
+    chirp_fs.py list
+    chirp_fs.py reboot
+    chirp_fs.py write /scripts/arp.wren arp.wren
+    chirp_fs.py read /scripts/arp.wren
+    chirp_fs.py run /scripts/arp.wren
+    cat patch.wren | chirp_fs.py write /scripts/patch.wren
+    chirp_fs.py delete /scripts/arp.wren
+    chirp_fs.py stat /scripts/_runtime.wren
+    chirp_fs.py monitor                 # Indefinite; Ctrl-C to stop
+    chirp_fs.py monitor -d 10           # Monitor for 10 seconds
+    chirp_fs.py sync                    # Upload scripts/ and midi_maps/ to device
+    chirp_fs.py sync scripts/           # Upload only scripts/
+    chirp_fs.py sync scripts/ midi_maps/ --delete  # Sync and remove orphaned device files
 """
 
 import argparse
@@ -217,7 +217,7 @@ def _build_readme_text() -> str:
     build_date = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
     return (
-        "Merge Device Flash Manifest\n"
+        "Chirp Device Flash Manifest\n"
         "===========================\n\n"
         f"Build date: {build_date}\n"
         f"Git revision: {revision}\n"
@@ -232,7 +232,7 @@ def _build_readme_text() -> str:
 
 # ── Client ────────────────────────────────────────────────────────────────────
 
-class MergeClient:
+class ChirpClient:
     def __init__(self, port: str, baud: int = 115200, timeout: float = 5.0):
         self._port    = port
         self._baud    = baud
@@ -634,8 +634,8 @@ class MergeClient:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        prog="merge_fs",
-        description="Host-side script filesystem tool for the Merge device.",
+        prog="chirp_fs",
+        description="Host-side script filesystem tool for the Chirp device.",
     )
     parser.add_argument("-p", "--port",    default="/dev/ttyACM0")
     parser.add_argument("-b", "--baud",    type=int, default=115200)
@@ -691,7 +691,7 @@ def main() -> None:
             while time.monotonic() < deadline:
                 remaining = max(0.0, deadline - time.monotonic()) if args.duration > 0 else 0.0
                 try:
-                    with MergeClient(args.port, args.baud, args.timeout) as client:
+                    with ChirpClient(args.port, args.baud, args.timeout) as client:
                         # Keep session bounded when duration is finite.
                         session_timeout = remaining if args.duration > 0 else 0.0
                         client.monitor_logs(timeout=session_timeout)
@@ -704,7 +704,7 @@ def main() -> None:
             print("Monitor stopped.", file=sys.stderr)
             return
 
-        with MergeClient(args.port, args.baud, args.timeout) as client:
+        with ChirpClient(args.port, args.baud, args.timeout) as client:
 
             if args.cmd == "ping":
                 rtt = client.ping()

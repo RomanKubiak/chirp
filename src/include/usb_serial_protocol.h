@@ -16,7 +16,7 @@ static constexpr uint16_t FRAME_OVERHEAD    = 8;
 static constexpr uint16_t FRAME_MAX_PAYLOAD = 4096;
 
 // ── Message types ─────────────────────────────────────────────────────────────
-enum MergeMessageType : uint8_t
+enum ChirpMessageType : uint8_t
 {
     MSG_LOG_TEXT         = 0x01,
     MSG_MIDI_EVENT       = 0x10,
@@ -44,7 +44,7 @@ enum MergeMessageType : uint8_t
 };
 
 // ── Status codes ─────────────────────────────────────────────────────────────
-enum MergeStatus : uint8_t
+enum ChirpStatus : uint8_t
 {
     STATUS_OK        = 0x00,
     STATUS_ERROR     = 0x01,
@@ -72,7 +72,7 @@ public:
 };
 
 // ── Parsed/built frame ────────────────────────────────────────────────────────
-struct MergeFrame
+struct ChirpFrame
 {
     uint8_t  type;
     uint8_t  seq;
@@ -81,7 +81,7 @@ struct MergeFrame
 };
 
 // ── Frame encoder ─────────────────────────────────────────────────────────────
-class MergeProtocol
+class ChirpProtocol
 {
 public:
     // Encode a frame into outBuf. Returns total bytes written, or 0 on error.
