@@ -91,14 +91,14 @@ class Log {
 }
 
 // ── File I/O ───────────────────────────────────────────────────────────────
-// Paths must start with /scripts/ or /data/ and may not contain "..".
+// Paths must start with /scripts/, /userdata/, or /data/ and may not contain "..".
 //
-//   var src = File.read("/data/synth.cfg")   // String or null on error
-//   File.write("/data/out.txt", "hello")     // Bool
-//   File.exists("/data/synth.cfg")           // Bool
-//   File.size("/data/synth.cfg")             // Num (bytes) or -1
-//   File.remove("/data/synth.cfg")           // Bool
-//   var names = File.list("/data")           // List of entry names
+//   var src = File.read("/userdata/synth.cfg")   // String or null on error
+//   File.write("/userdata/out.txt", "hello")     // Bool
+//   File.exists("/userdata/synth.cfg")           // Bool
+//   File.size("/userdata/synth.cfg")             // Num (bytes) or -1
+//   File.remove("/userdata/synth.cfg")           // Bool
+//   var names = File.list("/userdata")           // List of entry names
 
 class File {
     static read(path)          { FileNative.read(path) }
@@ -173,6 +173,170 @@ class MidiEvent {
     isPitchBend { _type == Midi.pitchBendType }
 }
 
+// ── MCU message value object ───────────────────────────────────────────────
+class McuMessage {
+    construct new(event, name, state, detail) {
+        _event  = event
+        _name   = name
+        _state  = state
+        _detail = detail
+    }
+    event    { _event }
+    name     { _name }
+    state    { _state }
+    detail   { _detail }
+    portName { _event.portName }
+    toString {
+        var s = "mcu:%(portName) %(_name)"
+        if (_state  != null) s = s + " %(_state)"
+        if (_detail != null) s = s + " (%(_detail))"
+        return s
+    }
+}
+
+// ── HUI message value object ───────────────────────────────────────────────
+class HuiMessage {
+    construct new(event, name, state) {
+        _event = event
+        _name  = name
+        _state = state
+    }
+    event    { _event }
+    name     { _name }
+    state    { _state }
+    portName { _event.portName }
+    toString { "hui:%(portName) %(_name) %(_state)" }
+}
+
+// ── MCU decoder (stateless) ────────────────────────────────────────────────
+class McuDecoder {
+    static decode(event) {
+        if (event.isNoteOn || event.isNoteOff) {
+            var n = McuDecoder.noteName(event.note)
+            if (n == null) return null
+            return McuMessage.new(event, n, event.isNoteOn ? "press" : "release", null)
+        }
+        if (event.isControlChange) {
+            var cc = event.controller
+            if (cc >= 16 && cc <= 23) {
+                var v = event.value
+                return McuMessage.new(event, "vpot_%(cc - 15)",
+                    (v & 0x40) != 0 ? "ccw" : "cw", "%(v & 0x3F)")
+            }
+            if (cc == 60) {
+                var v = event.value
+                return McuMessage.new(event, "jog",
+                    (v & 0x40) != 0 ? "ccw" : "cw", "%(v & 0x3F)")
+            }
+        }
+        if (event.isPitchBend) {
+            var strip = event.channel < 8 ? "ch%(event.channel + 1)" : "master"
+            var raw   = event.data1 | (event.data2 << 7)
+            return McuMessage.new(event, "fader_%(strip)", null, "%(raw)")
+        }
+        return null
+    }
+
+    static noteName(n) {
+        if (n <  8)  return "rec_rdy_%(n + 1)"
+        if (n < 16)  return "solo_%(n - 7)"
+        if (n < 24)  return "mute_%(n - 15)"
+        if (n < 32)  return "select_%(n - 23)"
+        if (n < 40)  return "vpot_sel_%(n - 31)"
+        if (n >= 54 && n <= 61)   return "f%(n - 53)"
+        if (n >= 104 && n <= 111) return "fader_touch_%(n - 103)"
+        if (n == 40)  return "assign_track"
+        if (n == 41)  return "assign_send"
+        if (n == 42)  return "assign_pan"
+        if (n == 43)  return "assign_plugin"
+        if (n == 44)  return "assign_eq"
+        if (n == 45)  return "assign_instr"
+        if (n == 46)  return "bank_left"
+        if (n == 47)  return "bank_right"
+        if (n == 48)  return "ch_bank_left"
+        if (n == 49)  return "ch_bank_right"
+        if (n == 50)  return "flip"
+        if (n == 51)  return "global_view"
+        if (n == 52)  return "name_value"
+        if (n == 53)  return "smpte_beats"
+        if (n == 70)  return "shift"
+        if (n == 71)  return "option"
+        if (n == 72)  return "ctrl"
+        if (n == 73)  return "alt"
+        if (n == 74)  return "auto_read"
+        if (n == 75)  return "auto_write"
+        if (n == 76)  return "trim"
+        if (n == 77)  return "auto_touch"
+        if (n == 78)  return "auto_latch"
+        if (n == 79)  return "group"
+        if (n == 80)  return "save"
+        if (n == 81)  return "undo"
+        if (n == 82)  return "cancel"
+        if (n == 83)  return "enter"
+        if (n == 84)  return "marker"
+        if (n == 85)  return "nudge"
+        if (n == 86)  return "cycle"
+        if (n == 87)  return "drop"
+        if (n == 88)  return "replace"
+        if (n == 89)  return "click"
+        if (n == 90)  return "solo_mode"
+        if (n == 91)  return "rewind"
+        if (n == 92)  return "ffwd"
+        if (n == 93)  return "stop"
+        if (n == 94)  return "play"
+        if (n == 95)  return "record"
+        if (n == 96)  return "cursor_up"
+        if (n == 97)  return "cursor_down"
+        if (n == 98)  return "cursor_left"
+        if (n == 99)  return "cursor_right"
+        if (n == 100) return "zoom"
+        if (n == 101) return "scrub"
+        if (n == 102) return "user_a"
+        if (n == 103) return "user_b"
+        if (n == 112) return "fader_touch_master"
+        return null
+    }
+}
+
+// ── HUI decoder (stateful: tracks zone from CC 0 before CC 32) ────────────
+class HuiDecoder {
+    static decode(event) {
+        if (!event.isControlChange || event.channel != 0) return null
+        if (event.controller == 0) {
+            __zone = event.value
+            return null
+        }
+        if (event.controller == 32 && __zone != null) {
+            var zone    = __zone
+            __zone      = null
+            var port    = event.value & 0x0F
+            var pressed = (event.value & 0x40) != 0
+            return HuiDecoder.describe(event, zone, port, pressed)
+        }
+        return null
+    }
+
+    static describe(event, zone, port, pressed) {
+        var st = pressed ? "press" : "release"
+        if (zone < 8) {
+            var p = ["fader_lo","select","mute","solo","auto","vpot_sel","insert","rec_rdy"]
+            var pname = port < p.count ? p[port] : "port_" + port.toString
+            return HuiMessage.new(event, "ch%(zone + 1)_%(pname)", st)
+        }
+        if (zone == 12) {
+            var t = ["roto_lo","roto_hi","roto_led","","","stop","play","ffwd","rewind","record","return"]
+            var tname = (port < t.count && t[port] != "") ? t[port] : "port_" + port.toString
+            return HuiMessage.new(event, "transport_%(tname)", st)
+        }
+        if (zone == 13) {
+            var e = ["save","undo","","","edit_mode","cut","copy","paste","delete","insert","numpad","numpad_dot"]
+            var ename = (port < e.count && e[port] != "") ? e[port] : "port_" + port.toString
+            return HuiMessage.new(event, "edit_%(ename)", st)
+        }
+        return HuiMessage.new(event, "zone_%(zone)_port_%(port)", st)
+    }
+}
+
 class MidiApi {
     construct new() {
         _eventListeners = []
@@ -180,6 +344,8 @@ class MidiApi {
         _noteOffListeners = []
         _controlChangeListeners = []
         _programChangeListeners = []
+        _mcuListeners = []
+        _huiListeners = []
     }
 
     listen(callback) {
@@ -211,12 +377,24 @@ class MidiApi {
         return callback
     }
 
+    onMcuMessage(callback) {
+        _mcuListeners.add(callback)
+        return callback
+    }
+
+    onHuiMessage(callback) {
+        _huiListeners.add(callback)
+        return callback
+    }
+
     clearListeners() {
         _eventListeners = []
         _noteOnListeners = []
         _noteOffListeners = []
         _controlChangeListeners = []
         _programChangeListeners = []
+        _mcuListeners = []
+        _huiListeners = []
     }
 
     noteOffType { MidiNative.noteOffType() }
@@ -278,6 +456,14 @@ class MidiApi {
         if (event.isNoteOff) emitListeners(_noteOffListeners, event)
         if (event.isControlChange) emitListeners(_controlChangeListeners, event)
         if (event.isProgramChange) emitListeners(_programChangeListeners, event)
+        if (_mcuListeners.count > 0) {
+            var m = McuDecoder.decode(event)
+            if (m != null) emitListeners(_mcuListeners, m)
+        }
+        if (_huiListeners.count > 0) {
+            var h = HuiDecoder.decode(event)
+            if (h != null) emitListeners(_huiListeners, h)
+        }
     }
 
     emitListeners(listeners, event) {
@@ -511,15 +697,17 @@ void debugNativeError(WrenVM *vm)
 }
 
 // ── Path validation ────────────────────────────────────────────────────────
-// Accept only /scripts/* and /data/* to prevent filesystem escapes.
+// Accept /scripts/*, /userdata/*, and /data/* to prevent filesystem escapes.
 static bool isValidFsPath(const char *path)
 {
     if (path == nullptr || path[0] != '/') return false;
     if (strstr(path, "..") != nullptr)     return false;
-    return (std::strncmp(path, "/scripts/", 9) == 0 ||
-            std::strncmp(path, "/data/",    6) == 0 ||
-            std::strcmp(path, "/data")         == 0 ||
-            std::strcmp(path, "/scripts")      == 0);
+    return (std::strncmp(path, "/scripts/",  9) == 0 ||
+            std::strncmp(path, "/userdata/", 10) == 0 ||
+            std::strncmp(path, "/data/",     6) == 0 ||
+            std::strcmp(path, "/userdata")       == 0 ||
+            std::strcmp(path, "/data")           == 0 ||
+            std::strcmp(path, "/scripts")        == 0);
 }
 
 // ── FileNative handlers ────────────────────────────────────────────────────
@@ -956,10 +1144,31 @@ bool captureDispatchHandles(WrenVM *vm)
 }
 }
 
+// Free the buffer allocated for a loaded module source.
+static void freeLoadedModule(WrenVM *, const char *, WrenLoadModuleResult result)
+{
+    delete[] static_cast<char *>(result.userData);
+}
+
 void WrenMidiBridge::configure(WrenConfiguration &config)
 {
     config.bindForeignMethodFn = bindMidiForeignMethod;
-    config.bindForeignClassFn = bindMidiForeignClass;
+    config.bindForeignClassFn  = bindMidiForeignClass;
+
+    // Serve `import "json"` from /scripts/builtin/json.wren stored on-device.
+    // filesystem. Called lazily the first time a script imports the module.
+    config.loadModuleFn = [](WrenVM *, const char *name) -> WrenLoadModuleResult {
+        if (std::strcmp(name, "json") != 0 || gFsProvider.read == nullptr)
+            return {nullptr, nullptr, nullptr};
+
+        String src;
+        if (!gFsProvider.read("/scripts/builtin/json.wren", src))
+            return {nullptr, nullptr, nullptr};
+
+        char *buf = new char[src.length() + 1];
+        std::memcpy(buf, src.c_str(), src.length() + 1);
+        return {buf, freeLoadedModule, buf};
+    };
 }
 
 void WrenMidiBridge::setOutputSender(MidiOutputSendFn sender)

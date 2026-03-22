@@ -35,7 +35,24 @@ $(BUILD)/$(TARGET).hex: $(SRC) | $(BUILD)
 		.
 
 upload:
-	teensy_loader_cli --mcu=$(BOARD) -srv $(OUTPUT)/$(TARGET).ino.hex
+	@echo "Press the button on the Teensy, then wait..."
+	teensy_loader_cli --mcu=$(BOARD) -wvrs $(OUTPUT)/$(TARGET).ino.hex
+
+MERGE_FS     = python3 scripts/merge_fs.py -p $(PORT)
+SYNC_DIRS    = scripts/ midi_maps/ third_party/wren-json/
+DEVICE_WAIT  = 4
+
+# Upload filesystem assets (scripts/ + midi_maps/) to device over USB serial.
+# Use --delete to purge stale managed files before copying new assets.
+upload-fs:
+	$(MERGE_FS) sync --delete $(SYNC_DIRS)
+
+# Build firmware, flash it, wait for reboot, then sync filesystem assets.
+upload-all: $(BUILD)/$(TARGET).hex
+	$(MAKE) upload
+	@echo "Waiting $(DEVICE_WAIT)s for device to reboot..."
+	@sleep $(DEVICE_WAIT)
+	$(MAKE) upload-fs
 
 clean:
 	rm -rf $(BUILD)

@@ -40,12 +40,18 @@ Examples
     merge_fs.py stat /scripts/_runtime.wren
     merge_fs.py monitor                 # Indefinite; Ctrl-C to stop
     merge_fs.py monitor -d 10           # Monitor for 10 seconds
+    merge_fs.py sync                    # Upload scripts/ and midi_maps/ to device
+    merge_fs.py sync scripts/           # Upload only scripts/
+    merge_fs.py sync scripts/ midi_maps/ --delete  # Sync and remove orphaned device files
 """
 
 import argparse
 import struct
+import subprocess
 import sys
 import time
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Optional, Tuple
 
 try:
@@ -59,6 +65,7 @@ FRAME_SYNC0       = 0xAA
 FRAME_SYNC1       = 0x55
 FRAME_OVERHEAD    = 8
 FRAME_MAX_PAYLOAD = 4096
+WRITE_CHUNK_MARKER = 0xFF
 
 MSG_LOG_TEXT         = 0x01
 MSG_PING             = 0x7E
@@ -131,43 +138,97 @@ def _check_status(data: bytes) -> None:
 def _name_payload(name: str) -> bytes:
     nb = name.encode("utf-8")
     if len(nb) > 255:
-        raise ValueError("Script name too long (max 255 bytes)")
+        raise ValueError("Path too long (max 255 bytes)")
     return bytes([len(nb)]) + nb
 
 
-def _normalize_script_name(name: str) -> str:
-    """
-    Normalize user script input to the flat /scripts namespace expected by firmware.
-
-    Accepts: "foo", "foo.wren", "/scripts/foo", "/scripts/foo.wren"
-    Returns: "foo"
-    """
-    normalized = name.strip()
+def _normalize_device_path(path: str) -> str:
+    normalized = path.strip()
     if not normalized:
-        raise ValueError("Script name cannot be empty")
+        raise ValueError("Path cannot be empty")
 
-    if normalized.startswith("/scripts/"):
-        normalized = normalized[len("/scripts/"):]
-    elif normalized.startswith("scripts/"):
-        normalized = normalized[len("scripts/"):]
-    elif normalized.startswith("/"):
-        normalized = normalized[1:]
+    if "\\" in normalized:
+        normalized = normalized.replace("\\", "/")
 
-    if normalized.endswith(".wren"):
-        normalized = normalized[:-5]
+    if not normalized.startswith("/"):
+        normalized = "/" + normalized
 
-    if not normalized:
-        raise ValueError("Script name cannot be empty")
+    while "//" in normalized:
+        normalized = normalized.replace("//", "/")
 
-    if "/" in normalized or "\\" in normalized or ".." in normalized:
-        raise ValueError("Only flat /scripts names are supported (no subdirectories)")
+    if ".." in normalized:
+        raise ValueError("Path cannot contain '..'")
+
+    if normalized.endswith("/") and len(normalized) > 1:
+        normalized = normalized[:-1]
 
     return normalized
 
 
-def _display_script_path(name: str) -> str:
-    normalized = _normalize_script_name(name)
-    return f"/scripts/{normalized}.wren"
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parent.parent
+
+
+def _target_base_for_dir(local_dir: Path) -> str:
+    value = str(local_dir).replace("\\", "/")
+    if value.endswith("third_party/wren-json"):
+        return "/scripts/builtin"
+    if value.endswith("midi_maps"):
+        return "/userdata"
+    if value.endswith("scripts"):
+        return "/scripts/user"
+    return "/scripts/user"
+
+
+def _build_readme_text() -> str:
+    root = _repo_root()
+    revision = "unknown"
+    branch = "unknown"
+    dirty = "unknown"
+
+    try:
+        revision = subprocess.check_output(
+            ["git", "-C", str(root), "rev-parse", "--short", "HEAD"],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+    except Exception:
+        pass
+
+    try:
+        branch = subprocess.check_output(
+            ["git", "-C", str(root), "rev-parse", "--abbrev-ref", "HEAD"],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+    except Exception:
+        pass
+
+    try:
+        status = subprocess.check_output(
+            ["git", "-C", str(root), "status", "--porcelain"],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        )
+        dirty = "yes" if status.strip() else "no"
+    except Exception:
+        pass
+
+    build_date = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+
+    return (
+        "Merge Device Flash Manifest\n"
+        "===========================\n\n"
+        f"Build date: {build_date}\n"
+        f"Git revision: {revision}\n"
+        f"Git branch: {branch}\n"
+        f"Git dirty: {dirty}\n\n"
+        "Flash layout:\n"
+        "- /scripts/user      User-managed Wren scripts (*.wren)\n"
+        "- /scripts/builtin   Built-in scripts (runtime/modules)\n"
+        "- /userdata          User data files (maps/config/etc.)\n"
+        "- /README.txt        Build metadata on flash root\n"
+    )
 
 # ── Client ────────────────────────────────────────────────────────────────────
 
@@ -328,8 +389,8 @@ class MergeClient:
         # Device may reset before response can be read; treat as success.
         return
 
-    def list_scripts(self) -> list:
-        """Return a list of script names (without .wren extension)."""
+    def list_files(self) -> list:
+        """Return a list of managed file paths on the device."""
         rtype, data = self._request(MSG_FS_LIST_REQ)
         if rtype != MSG_FS_LIST_RESP:
             raise RuntimeError(f"Unexpected response: 0x{rtype:02X}")
@@ -342,60 +403,85 @@ class MergeClient:
             if idx >= len(data):
                 break
             nl = data[idx]; idx += 1
-            names.append(data[idx:idx + nl].decode("utf-8", errors="replace"))
+            names.append(_normalize_device_path(data[idx:idx + nl].decode("utf-8", errors="replace")))
             idx += nl
         return names
 
-    def list_script_files(self) -> list:
-        """Return a list of (/scripts/<name>.wren, size_bytes) tuples."""
-        names = sorted(self.list_scripts())
+    def list_file_stats(self) -> list:
+        """Return a list of (path, size_bytes) tuples."""
+        names = sorted(self.list_files())
         files = []
-        for name in names:
-            path = _display_script_path(name)
-            size = self.stat_script(name)
+        for path in names:
+            size = self.stat_file(path)
             files.append((path, size))
         return files
 
-    def read_script(self, name: str) -> str:
-        """Return the source of a script as a string."""
-        script_name = _normalize_script_name(name)
-        rtype, data = self._request(MSG_FS_READ_REQ, _name_payload(script_name))
+    def read_file(self, path: str) -> str:
+        """Return a device file as string."""
+        path = _normalize_device_path(path)
+        rtype, data = self._request(MSG_FS_READ_REQ, _name_payload(path))
         if rtype != MSG_FS_READ_RESP:
             raise RuntimeError(f"Unexpected response: 0x{rtype:02X}")
         _check_status(data)
         return data[1:].decode("utf-8", errors="replace")
 
-    def write_script(self, name: str, source: str) -> None:
-        """Write (create or overwrite) a script."""
-        script_name = _normalize_script_name(name)
-        name_bytes = script_name.encode("utf-8")
+    def write_file(self, path: str, source: str) -> None:
+        """Write (create or overwrite) a file."""
+        path = _normalize_device_path(path)
+        name_bytes = path.encode("utf-8")
         src_bytes  = source.encode("utf-8")
         if len(name_bytes) > 255:
-            raise ValueError("Script name too long")
+            raise ValueError("Path too long")
         total = 1 + len(name_bytes) + len(src_bytes)
-        if total > FRAME_MAX_PAYLOAD:
-            raise ValueError(
-                f"Script too large for single transfer "
-                f"({len(src_bytes)} bytes, max {FRAME_MAX_PAYLOAD - 1 - len(name_bytes)})"
-            )
-        payload = bytes([len(name_bytes)]) + name_bytes + src_bytes
-        rtype, data = self._request(MSG_FS_WRITE_REQ, payload)
-        if rtype != MSG_FS_WRITE_RESP:
-            raise RuntimeError(f"Unexpected response: 0x{rtype:02X}")
-        _check_status(data)
+        if total <= FRAME_MAX_PAYLOAD:
+            payload = bytes([len(name_bytes)]) + name_bytes + src_bytes
+            rtype, data = self._request(MSG_FS_WRITE_REQ, payload)
+            if rtype != MSG_FS_WRITE_RESP:
+                raise RuntimeError(f"Unexpected response: 0x{rtype:02X}")
+            _check_status(data)
+            return
 
-    def delete_script(self, name: str) -> None:
-        """Delete a script."""
-        script_name = _normalize_script_name(name)
-        rtype, data = self._request(MSG_FS_DELETE_REQ, _name_payload(script_name))
+        max_chunk = FRAME_MAX_PAYLOAD - 1 - len(name_bytes) - 2
+        if max_chunk <= 0:
+            raise ValueError("Path too long for chunked transfer")
+
+        offset = 0
+        chunk_index = 0
+        total_len = len(src_bytes)
+        while offset < total_len:
+            chunk = src_bytes[offset:offset + max_chunk]
+            offset += len(chunk)
+
+            flags = 0
+            if chunk_index > 0:
+                flags |= 0x01  # append
+            if offset >= total_len:
+                flags |= 0x02  # finalize
+
+            payload = (
+                bytes([len(name_bytes)])
+                + name_bytes
+                + bytes([WRITE_CHUNK_MARKER, flags])
+                + chunk
+            )
+            rtype, data = self._request(MSG_FS_WRITE_REQ, payload)
+            if rtype != MSG_FS_WRITE_RESP:
+                raise RuntimeError(f"Unexpected response: 0x{rtype:02X}")
+            _check_status(data)
+            chunk_index += 1
+
+    def delete_file(self, path: str) -> None:
+        """Delete a file."""
+        path = _normalize_device_path(path)
+        rtype, data = self._request(MSG_FS_DELETE_REQ, _name_payload(path))
         if rtype != MSG_FS_DELETE_RESP:
             raise RuntimeError(f"Unexpected response: 0x{rtype:02X}")
         _check_status(data)
 
-    def stat_script(self, name: str) -> int:
-        """Return script size in bytes."""
-        script_name = _normalize_script_name(name)
-        rtype, data = self._request(MSG_FS_STAT_REQ, _name_payload(script_name))
+    def stat_file(self, path: str) -> int:
+        """Return file size in bytes."""
+        path = _normalize_device_path(path)
+        rtype, data = self._request(MSG_FS_STAT_REQ, _name_payload(path))
         if rtype != MSG_FS_STAT_RESP:
             raise RuntimeError(f"Unexpected response: 0x{rtype:02X}")
         _check_status(data)
@@ -420,10 +506,10 @@ class MergeClient:
             info["block_cycles"] = int.from_bytes(data[17:21], byteorder="little", signed=True)
         return info
 
-    def run_script(self, name: str) -> str:
-        """Execute a script at runtime and return a success message."""
-        script_name = _normalize_script_name(name)
-        rtype, data = self._request(MSG_FS_RUN_REQ, _name_payload(script_name))
+    def run_script(self, path: str) -> str:
+        """Execute a .wren script at runtime and return a success message."""
+        path = _normalize_device_path(path)
+        rtype, data = self._request(MSG_FS_RUN_REQ, _name_payload(path))
         if rtype != MSG_FS_RUN_RESP:
             raise RuntimeError(f"Unexpected response: 0x{rtype:02X}")
         if len(data) < 1:
@@ -455,6 +541,77 @@ class MergeClient:
                 print(f"[DEVICE] {text}", file=sys.stderr)
                 return text
         return None
+
+    def sync_files(self, dirs: list, extensions: list = None,
+                    delete: bool = False, verbose: bool = True):
+        """
+        Upload all matching files from local directories to the device.
+
+                Layout mapping:
+                    scripts/               -> /scripts/user/
+                    third_party/wren-json/ -> /scripts/builtin/
+                    midi_maps/             -> /userdata/
+
+                All filenames are uploaded with their full extensions unchanged.
+
+        Returns (uploaded, deleted, errors) counts.
+        """
+        if extensions is None:
+            extensions = [".wren", ".json"]
+
+        local_files: dict = {}  # device_path -> Path
+        for d in dirs:
+            p = Path(d)
+            if not p.is_dir():
+                print(f"Warning: directory '{d}' not found, skipping", file=sys.stderr)
+                continue
+            target_base = _target_base_for_dir(p)
+            for f in sorted(p.iterdir()):
+                if not f.is_file() or f.suffix not in extensions:
+                    continue
+                if target_base == "/scripts/builtin" and f.name != "json.wren":
+                    continue
+                device_path = _normalize_device_path(f"{target_base}/{f.name}")
+                local_files[device_path] = f
+
+        # Always publish a firmware metadata README to flash.
+        local_files["/README.txt"] = None
+
+        deleted = 0
+        if delete:
+            managed_prefixes = ("/scripts/user/", "/scripts/builtin/", "/userdata/")
+            existing_paths = set(self.list_files())
+            wanted_paths = set(local_files.keys())
+            # Delete first so uploads have maximum free space available.
+            for path in sorted(existing_paths - wanted_paths):
+                if path == "/README.txt":
+                    pass
+                elif not path.startswith(managed_prefixes):
+                    continue
+                try:
+                    self.delete_file(path)
+                    if verbose:
+                        print(f"  deleted {path}")
+                    deleted += 1
+                except Exception as e:
+                    print(f"  ERROR deleting {path}: {e}", file=sys.stderr)
+
+        uploaded = errors = 0
+        for device_path, local_path in sorted(local_files.items()):
+            source = _build_readme_text() if local_path is None else local_path.read_text(encoding="utf-8")
+            try:
+                self.write_file(device_path, source)
+                if verbose:
+                    src_name = "<generated README>" if local_path is None else str(local_path)
+                    print(f"  {src_name}  ->  {device_path}"
+                          f"  ({len(source.encode())} bytes)")
+                uploaded += 1
+            except Exception as e:
+                label = device_path if local_path is None else str(local_path)
+                print(f"  ERROR uploading {label}: {e}", file=sys.stderr)
+                errors += 1
+
+        return uploaded, deleted, errors
 
     def monitor_logs(self, timeout: float = 0.0) -> None:
         """
@@ -489,7 +646,7 @@ def main() -> None:
 
     sub.add_parser("ping",   help="Test connection")
     sub.add_parser("reboot", help="Request device reboot/reset")
-    sub.add_parser("list",   help="List scripts on device")
+    sub.add_parser("list",   help="List managed files on device")
 
     p_read = sub.add_parser("read", help="Print script file to stdout")
     p_read.add_argument("path")
@@ -511,6 +668,18 @@ def main() -> None:
     p_monitor = sub.add_parser("monitor", help="Watch device debug/log messages")
     p_monitor.add_argument("-d", "--duration", type=float, default=0.0,
                            help="Monitor for N seconds (0 = indefinite, Ctrl-C to stop)")
+
+    p_sync = sub.add_parser("sync",
+                            help="Upload all local scripts and maps to device")
+    p_sync.add_argument("dirs", nargs="*", default=["scripts/", "third_party/wren-json/", "midi_maps/"],
+                        help="Directories to sync (default: scripts/ third_party/wren-json/ midi_maps/)")
+    p_sync.add_argument("--ext", nargs="+", default=[".wren", ".json"],
+                        metavar="EXT",
+                        help="File extensions to include (default: .wren .json)")
+    p_sync.add_argument("--delete", action="store_true",
+                        help="Remove device files not present in local directories")
+    p_sync.add_argument("--wait", type=float, default=0.0, metavar="SECS",
+                        help="Seconds to wait before connecting (useful after a reboot)")
 
     args = parser.parse_args()
 
@@ -546,9 +715,9 @@ def main() -> None:
                 print("Reboot command sent")
 
             elif args.cmd == "list":
-                files = client.list_script_files()
+                files = client.list_file_stats()
                 if not files:
-                    print("(no scripts)")
+                    print("(no managed files)")
                 else:
                     for path, size in files:
                         print(f"{path}\t{size} bytes")
@@ -574,7 +743,7 @@ def main() -> None:
                     pass
 
             elif args.cmd == "read":
-                source = client.read_script(args.path)
+                source = client.read_file(args.path)
                 sys.stdout.write(source)
                 if source and not source.endswith("\n"):
                     sys.stdout.write("\n")
@@ -585,20 +754,37 @@ def main() -> None:
                         source = f.read()
                 else:
                     source = sys.stdin.read()
-                client.write_script(args.path, source)
-                print(f"Written '{_display_script_path(args.path)}' ({len(source.encode())} bytes)")
+                target = _normalize_device_path(args.path)
+                client.write_file(target, source)
+                print(f"Written '{target}' ({len(source.encode())} bytes)")
 
             elif args.cmd == "delete":
-                client.delete_script(args.path)
-                print(f"Deleted '{_display_script_path(args.path)}'")
+                target = _normalize_device_path(args.path)
+                client.delete_file(target)
+                print(f"Deleted '{target}'")
 
             elif args.cmd == "stat":
-                size = client.stat_script(args.path)
-                print(f"{_display_script_path(args.path)}: {size} bytes")
+                target = _normalize_device_path(args.path)
+                size = client.stat_file(target)
+                print(f"{target}: {size} bytes")
 
             elif args.cmd == "run":
-                result = client.run_script(args.path)
-                print(f"Executed '{_display_script_path(args.path)}': {result}")
+                target = _normalize_device_path(args.path)
+                result = client.run_script(target)
+                print(f"Executed '{target}': {result}")
+
+            elif args.cmd == "sync":
+                if args.wait > 0:
+                    print(f"Waiting {args.wait:.0f}s for device to come up...",
+                          file=sys.stderr)
+                    time.sleep(args.wait)
+                uploaded, deleted, errors = client.sync_files(
+                    args.dirs, args.ext, args.delete
+                )
+                print(f"Sync complete: {uploaded} uploaded, {deleted} deleted,"
+                      f" {errors} error(s)")
+                if errors:
+                    sys.exit(1)
 
             elif args.cmd == "monitor":
                 # Handled above to support automatic reconnect.

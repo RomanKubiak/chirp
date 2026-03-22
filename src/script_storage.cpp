@@ -18,7 +18,7 @@ bool ScriptStorage::begin()
     }
 
     mounted_ = true;
-    return ensureScriptsDir();
+    return ensureManagedLayout();
 }
 
 bool ScriptStorage::isMounted() const
@@ -39,21 +39,7 @@ bool ScriptStorage::saveScript(const char *name, const String &source)
         return false;
     }
 
-    if (fs_.exists(path.c_str()))
-    {
-        fs_.remove(path.c_str());
-    }
-
-    File script = fs_.open(path.c_str(), FILE_WRITE);
-    if (!script)
-    {
-        return false;
-    }
-
-    size_t written = script.print(source);
-    script.flush();
-    script.close();
-    return written == source.length();
+    return saveFile(path.c_str(), source);
 }
 
 bool ScriptStorage::loadScript(const char *name, String &sourceOut)
@@ -71,20 +57,7 @@ bool ScriptStorage::loadScript(const char *name, String &sourceOut)
         return false;
     }
 
-    File script = fs_.open(path.c_str(), FILE_READ);
-    if (!script)
-    {
-        return false;
-    }
-
-    sourceOut.reserve(script.size() + 1);
-    while (script.available())
-    {
-        sourceOut += static_cast<char>(script.read());
-    }
-
-    script.close();
-    return true;
+    return loadFile(path.c_str(), sourceOut);
 }
 
 bool ScriptStorage::removeScript(const char *name)
@@ -100,12 +73,7 @@ bool ScriptStorage::removeScript(const char *name)
         return false;
     }
 
-    if (!fs_.exists(path.c_str()))
-    {
-        return false;
-    }
-
-    return fs_.remove(path.c_str());
+    return removeFile(path.c_str());
 }
 
 bool ScriptStorage::scriptExists(const char *name)
@@ -121,7 +89,23 @@ bool ScriptStorage::scriptExists(const char *name)
         return false;
     }
 
-    return fs_.exists(path.c_str());
+    return fileExists(path.c_str());
+}
+
+int32_t ScriptStorage::scriptSize(const char *name)
+{
+    if (!begin() || !isValidScriptName(name))
+    {
+        return -1;
+    }
+
+    String path = scriptPath(name);
+    if (path.length() == 0)
+    {
+        return -1;
+    }
+
+    return fileSize(path.c_str());
 }
 
 size_t ScriptStorage::listScripts(String *namesOut, size_t maxNames)
@@ -131,22 +115,191 @@ size_t ScriptStorage::listScripts(String *namesOut, size_t maxNames)
         return 0;
     }
 
-    File dir = fs_.open(scriptsDir_);
-    if (!dir || !dir.isDirectory())
+    String files[32];
+    size_t count = listFiles(scriptsDir_, files, 32);
+    size_t out = 0;
+
+    for (size_t i = 0; i < count; ++i)
     {
-        if (dir)
+        String name = files[i];
+        int slash = name.lastIndexOf('/');
+        if (slash >= 0)
         {
-            dir.close();
+            name = name.substring(slash + 1);
+        }
+
+        if (!name.endsWith(".wren"))
+        {
+            continue;
+        }
+
+        name.remove(name.length() - 5, 5);
+        if (namesOut != nullptr && out < maxNames)
+        {
+            namesOut[out] = name;
+        }
+        ++out;
+    }
+
+    return out;
+}
+
+bool ScriptStorage::saveFile(const char *path, const String &source)
+{
+    if (!begin())
+    {
+        return false;
+    }
+
+    String fullPath = normalizeAbsolutePath(path);
+    if (fullPath.length() == 0)
+    {
+        return false;
+    }
+
+    int slash = fullPath.lastIndexOf('/');
+    if (slash < 0)
+    {
+        return false;
+    }
+
+    String dir = (slash == 0) ? String("/") : fullPath.substring(0, slash);
+    if (!ensureDirectory(dir.c_str()))
+    {
+        return false;
+    }
+
+    if (fs_.exists(fullPath.c_str()))
+    {
+        fs_.remove(fullPath.c_str());
+    }
+
+    File file = fs_.open(fullPath.c_str(), FILE_WRITE);
+    if (!file)
+    {
+        return false;
+    }
+
+    size_t written = file.print(source);
+    file.flush();
+    file.close();
+    return written == source.length();
+}
+
+bool ScriptStorage::loadFile(const char *path, String &sourceOut)
+{
+    sourceOut = "";
+
+    if (!begin())
+    {
+        return false;
+    }
+
+    String fullPath = normalizeAbsolutePath(path);
+    if (fullPath.length() == 0)
+    {
+        return false;
+    }
+
+    File file = fs_.open(fullPath.c_str(), FILE_READ);
+    if (!file)
+    {
+        return false;
+    }
+
+    sourceOut.reserve(file.size() + 1);
+    while (file.available())
+    {
+        sourceOut += static_cast<char>(file.read());
+    }
+
+    file.close();
+    return true;
+}
+
+bool ScriptStorage::removeFile(const char *path)
+{
+    if (!begin())
+    {
+        return false;
+    }
+
+    String fullPath = normalizeAbsolutePath(path);
+    if (fullPath.length() == 0 || !fs_.exists(fullPath.c_str()))
+    {
+        return false;
+    }
+
+    return fs_.remove(fullPath.c_str());
+}
+
+bool ScriptStorage::fileExists(const char *path)
+{
+    if (!begin())
+    {
+        return false;
+    }
+
+    String fullPath = normalizeAbsolutePath(path);
+    if (fullPath.length() == 0)
+    {
+        return false;
+    }
+
+    return fs_.exists(fullPath.c_str());
+}
+
+int32_t ScriptStorage::fileSize(const char *path)
+{
+    if (!begin())
+    {
+        return -1;
+    }
+
+    String fullPath = normalizeAbsolutePath(path);
+    if (fullPath.length() == 0 || !fs_.exists(fullPath.c_str()))
+    {
+        return -1;
+    }
+
+    File file = fs_.open(fullPath.c_str(), FILE_READ);
+    if (!file)
+    {
+        return -1;
+    }
+
+    int32_t sz = static_cast<int32_t>(file.size());
+    file.close();
+    return sz;
+}
+
+size_t ScriptStorage::listFiles(const char *dir, String *namesOut, size_t maxNames)
+{
+    if (!begin())
+    {
+        return 0;
+    }
+
+    String base = normalizeAbsolutePath(dir);
+    if (base.length() == 0)
+    {
+        return 0;
+    }
+
+    File d = fs_.open(base.c_str());
+    if (!d || !d.isDirectory())
+    {
+        if (d)
+        {
+            d.close();
         }
         return 0;
     }
 
-    String prefix = String(scriptsDir_) + "/";
     size_t count = 0;
-
     while (true)
     {
-        File entry = dir.openNextFile();
+        File entry = d.openNextFile();
         if (!entry)
         {
             break;
@@ -155,27 +308,68 @@ size_t ScriptStorage::listScripts(String *namesOut, size_t maxNames)
         if (!entry.isDirectory())
         {
             String name = entry.name();
-            if (name.startsWith(prefix))
+            if (!name.startsWith("/"))
             {
-                name.remove(0, prefix.length());
+                String prefix = base;
+                if (!prefix.endsWith("/"))
+                {
+                    prefix += "/";
+                }
+                name = prefix + name;
             }
 
-            if (name.endsWith(".wren"))
+            if (namesOut != nullptr && count < maxNames)
             {
-                name.remove(name.length() - 5, 5); // strip ".wren"
-                if (namesOut != nullptr && count < maxNames)
-                {
-                    namesOut[count] = name;
-                }
-                ++count;
+                namesOut[count] = name;
             }
+            ++count;
         }
 
         entry.close();
     }
 
-    dir.close();
+    d.close();
     return count;
+}
+
+size_t ScriptStorage::listManagedFiles(String *namesOut, size_t maxNames)
+{
+    if (!begin())
+    {
+        return 0;
+    }
+
+    static constexpr const char *kManagedDirs[] = {
+        "/scripts/user",
+        "/scripts/builtin",
+        "/userdata",
+    };
+
+    size_t total = 0;
+    for (size_t i = 0; i < (sizeof(kManagedDirs) / sizeof(kManagedDirs[0])); ++i)
+    {
+        String files[32];
+        size_t count = listFiles(kManagedDirs[i], files, 32);
+        for (size_t j = 0; j < count; ++j)
+        {
+            if (namesOut != nullptr && total < maxNames)
+            {
+                namesOut[total] = files[j];
+            }
+            ++total;
+        }
+    }
+
+    if (fileExists("/README.txt"))
+    {
+        if (namesOut != nullptr && total < maxNames)
+        {
+            namesOut[total] = "/README.txt";
+        }
+        ++total;
+    }
+
+    return total;
 }
 
 String ScriptStorage::scriptPath(const char *name) const
@@ -197,29 +391,17 @@ String ScriptStorage::scriptPath(const char *name) const
     return fullPath;
 }
 
-int32_t ScriptStorage::scriptSize(const char *name)
+bool ScriptStorage::ensureDirectory(const char *path)
 {
-    if (!begin() || !isValidScriptName(name))
-        return -1;
-
-    String path = scriptPath(name);
-    if (path.length() == 0 || !fs_.exists(path.c_str()))
-        return -1;
-
-    File f = fs_.open(path.c_str(), FILE_READ);
-    if (!f)
-        return -1;
-
-    int32_t sz = static_cast<int32_t>(f.size());
-    f.close();
-    return sz;
-}
-
-bool ScriptStorage::ensureScriptsDir()
-{
-    if (fs_.exists(scriptsDir_))
+    String fullPath = normalizeAbsolutePath(path);
+    if (fullPath.length() == 0)
     {
-        File dir = fs_.open(scriptsDir_);
+        return false;
+    }
+
+    if (fs_.exists(fullPath.c_str()))
+    {
+        File dir = fs_.open(fullPath.c_str());
         bool isDir = dir && dir.isDirectory();
         if (dir)
         {
@@ -228,7 +410,78 @@ bool ScriptStorage::ensureScriptsDir()
         return isDir;
     }
 
-    return fs_.mkdir(scriptsDir_);
+    if (fullPath == "/")
+    {
+        return true;
+    }
+
+    int slash = fullPath.lastIndexOf('/');
+    if (slash > 0)
+    {
+        String parent = fullPath.substring(0, slash);
+        if (!ensureDirectory(parent.c_str()))
+        {
+            return false;
+        }
+    }
+
+    return fs_.mkdir(fullPath.c_str());
+}
+
+bool ScriptStorage::ensureManagedLayout()
+{
+    static constexpr const char *kRequiredDirs[] = {
+        "/scripts",
+        "/scripts/user",
+        "/scripts/builtin",
+        "/userdata",
+    };
+
+    for (size_t i = 0; i < (sizeof(kRequiredDirs) / sizeof(kRequiredDirs[0])); ++i)
+    {
+        if (!ensureDirectory(kRequiredDirs[i]))
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+bool ScriptStorage::isValidFilePath(const char *path) const
+{
+    if (path == nullptr || path[0] == '\0')
+    {
+        return false;
+    }
+
+    String value(path);
+    if (!value.startsWith("/"))
+    {
+        return false;
+    }
+
+    if (value.indexOf("..") != -1 || value.indexOf('\\') != -1)
+    {
+        return false;
+    }
+
+    return true;
+}
+
+String ScriptStorage::normalizeAbsolutePath(const char *path) const
+{
+    if (!isValidFilePath(path))
+    {
+        return String();
+    }
+
+    String value(path);
+    while (value.endsWith("/") && value.length() > 1)
+    {
+        value.remove(value.length() - 1, 1);
+    }
+    return value;
 }
 
 bool ScriptStorage::isValidScriptName(const char *name) const

@@ -21,6 +21,9 @@ extern MergeFS                            internalFlash;
 static uint8_t    fsBuf[FRAME_MAX_PAYLOAD];
 static MergeFrame incomingFrame;
 static const char kRebootToken[] = "RBT!";
+static constexpr uint8_t kWriteChunkMarker = 0xFF;
+static String writeChunkPath;
+static File writeChunkFile;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 static void fsStatus(uint8_t type, uint8_t seq, uint8_t status, bool flushNow = false)
@@ -70,8 +73,8 @@ static void handleFrame(const MergeFrame &frame)
 
     case MSG_FS_LIST_REQ:
     {
-        String names[32];
-        size_t count = scriptStorage.listScripts(names, 32);
+        String names[64];
+        size_t count = scriptStorage.listManagedFiles(names, 64);
         uint16_t idx = 0;
         fsBuf[idx++] = static_cast<uint8_t>(count & 0xFF);
         fsBuf[idx++] = static_cast<uint8_t>(count >> 8);
@@ -96,10 +99,10 @@ static void handleFrame(const MergeFrame &frame)
         uint8_t nameLen = frame.payload[0];
         if (nameLen == 0 || static_cast<uint16_t>(1 + nameLen) > frame.payloadLen)
             { fsStatus(MSG_FS_READ_RESP, frame.seq, STATUS_INVALID); break; }
-        char name[256] = {0};
-        memcpy(name, frame.payload + 1, nameLen);
+        char path[256] = {0};
+        memcpy(path, frame.payload + 1, nameLen);
         String source;
-        if (!scriptStorage.loadScript(name, source))
+        if (!scriptStorage.loadFile(path, source))
             { fsStatus(MSG_FS_READ_RESP, frame.seq, STATUS_NOT_FOUND); break; }
         if (source.length() + 1 > FRAME_MAX_PAYLOAD)
             { fsStatus(MSG_FS_READ_RESP, frame.seq, STATUS_TOO_LARGE); break; }
@@ -116,15 +119,86 @@ static void handleFrame(const MergeFrame &frame)
         uint8_t nameLen = frame.payload[0];
         if (nameLen == 0 || static_cast<uint16_t>(1 + nameLen) > frame.payloadLen)
             { fsStatus(MSG_FS_WRITE_RESP, frame.seq, STATUS_INVALID); break; }
-        char name[256] = {0};
-        memcpy(name, frame.payload + 1, nameLen);
+        char path[256] = {0};
+        memcpy(path, frame.payload + 1, nameLen);
         uint16_t dataOffset = 1 + nameLen;
-        uint16_t dataLen    = frame.payloadLen - dataOffset;
+        bool isChunked = (dataOffset + 2 <= frame.payloadLen) &&
+                         (frame.payload[dataOffset] == kWriteChunkMarker);
+
+        if (isChunked)
+        {
+            const uint8_t flags = frame.payload[dataOffset + 1];
+            const bool append   = (flags & 0x01) != 0;
+            const bool finalize = (flags & 0x02) != 0;
+            dataOffset += 2;
+            uint16_t dataLen = frame.payloadLen - dataOffset;
+
+            String incomingPath(path);
+            if (!append)
+            {
+                if (writeChunkFile)
+                {
+                    writeChunkFile.close();
+                }
+
+                writeChunkPath = incomingPath;
+
+                // Start a fresh destination file and ensure parent directories exist.
+                if (!scriptStorage.saveFile(path, String("")))
+                {
+                    fsStatus(MSG_FS_WRITE_RESP, frame.seq, STATUS_ERROR);
+                    writeChunkPath = "";
+                    break;
+                }
+
+                writeChunkFile = internalFlash.open(path, FILE_WRITE);
+                if (!writeChunkFile)
+                {
+                    fsStatus(MSG_FS_WRITE_RESP, frame.seq, STATUS_ERROR);
+                    writeChunkPath = "";
+                    break;
+                }
+            }
+            else if (writeChunkPath != incomingPath || !writeChunkFile)
+            {
+                fsStatus(MSG_FS_WRITE_RESP, frame.seq, STATUS_INVALID);
+                if (writeChunkFile)
+                {
+                    writeChunkFile.close();
+                }
+                writeChunkPath = "";
+                break;
+            }
+
+            size_t written = writeChunkFile.write(frame.payload + dataOffset, dataLen);
+            if (written != dataLen)
+            {
+                writeChunkFile.close();
+                writeChunkPath = "";
+                fsStatus(MSG_FS_WRITE_RESP, frame.seq, STATUS_ERROR);
+                break;
+            }
+
+            if (finalize)
+            {
+                writeChunkFile.flush();
+                writeChunkFile.close();
+                writeChunkPath = "";
+                fsStatus(MSG_FS_WRITE_RESP, frame.seq, STATUS_OK);
+            }
+            else
+            {
+                fsStatus(MSG_FS_WRITE_RESP, frame.seq, STATUS_OK);
+            }
+            break;
+        }
+
+        uint16_t dataLen = frame.payloadLen - dataOffset;
         memcpy(fsBuf, frame.payload + dataOffset, dataLen);
         fsBuf[dataLen] = '\0';
         String source(reinterpret_cast<char *>(fsBuf));
         fsStatus(MSG_FS_WRITE_RESP, frame.seq,
-                 scriptStorage.saveScript(name, source) ? STATUS_OK : STATUS_ERROR);
+                 scriptStorage.saveFile(path, source) ? STATUS_OK : STATUS_ERROR);
         break;
     }
 
@@ -134,10 +208,10 @@ static void handleFrame(const MergeFrame &frame)
         uint8_t nameLen = frame.payload[0];
         if (nameLen == 0 || static_cast<uint16_t>(1 + nameLen) > frame.payloadLen)
             { fsStatus(MSG_FS_DELETE_RESP, frame.seq, STATUS_INVALID); break; }
-        char name[256] = {0};
-        memcpy(name, frame.payload + 1, nameLen);
+        char path[256] = {0};
+        memcpy(path, frame.payload + 1, nameLen);
         fsStatus(MSG_FS_DELETE_RESP, frame.seq,
-                 scriptStorage.removeScript(name) ? STATUS_OK : STATUS_NOT_FOUND);
+                 scriptStorage.removeFile(path) ? STATUS_OK : STATUS_NOT_FOUND);
         break;
     }
 
@@ -147,9 +221,9 @@ static void handleFrame(const MergeFrame &frame)
         uint8_t nameLen = frame.payload[0];
         if (nameLen == 0 || static_cast<uint16_t>(1 + nameLen) > frame.payloadLen)
             { fsStatus(MSG_FS_STAT_RESP, frame.seq, STATUS_INVALID); break; }
-        char name[256] = {0};
-        memcpy(name, frame.payload + 1, nameLen);
-        int32_t sz = scriptStorage.scriptSize(name);
+        char path[256] = {0};
+        memcpy(path, frame.payload + 1, nameLen);
+        int32_t sz = scriptStorage.fileSize(path);
         if (sz < 0) { fsStatus(MSG_FS_STAT_RESP, frame.seq, STATUS_NOT_FOUND); break; }
         uint32_t usz = static_cast<uint32_t>(sz);
         fsBuf[0] = STATUS_OK;
@@ -167,10 +241,10 @@ static void handleFrame(const MergeFrame &frame)
         uint8_t nameLen = frame.payload[0];
         if (nameLen == 0 || static_cast<uint16_t>(1 + nameLen) > frame.payloadLen)
             { fsStatus(MSG_FS_RUN_RESP, frame.seq, STATUS_INVALID); break; }
-        char name[256] = {0};
-        memcpy(name, frame.payload + 1, nameLen);
+        char path[256] = {0};
+        memcpy(path, frame.payload + 1, nameLen);
         String source;
-        if (!scriptStorage.loadScript(name, source))
+        if (!scriptStorage.loadFile(path, source))
             { fsStatus(MSG_FS_RUN_RESP, frame.seq, STATUS_NOT_FOUND); break; }
 
         // ── Hot-reload sequence ──────────────────────────────────────────────
