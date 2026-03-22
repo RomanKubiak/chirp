@@ -31,8 +31,8 @@ From the current build configuration/logs:
 - `chirp/chirp.ino`: Arduino sketch entrypoint
 - `src/`: firmware components (MIDI router, USB protocol handlers, Wren bridge/host)
 - `src/include/`: headers and protocol definitions
-- `scripts/chirp_fs.py`: host-side serial tool for managing files on device flash
-- `scripts/*.wren`: Wren scripts uploaded to `/scripts/user` on the device
+- `tools/chirp_fs.py`: host-side serial tool for managing files on device flash
+- `scripts/*.wren`: user Wren scripts uploaded to `/scripts/user` on the device
 - `midi_maps/*.json`: user data uploaded to `/userdata` on device flash
 - `third_party/wren-json/`: JSON parser module for Wren
 
@@ -62,7 +62,7 @@ Full flow (build + upload + filesystem sync):
 make upload-all
 ```
 
-## Python Host Tool Setup (`scripts/chirp_fs.py`)
+## Python Host Tool Setup (`tools/chirp_fs.py`)
 
 ### 1) Install Python dependency
 
@@ -83,16 +83,16 @@ pip3 install --user pyserial
 Default serial port is `/dev/ttyACM0`. If needed, pass `-p`.
 
 ```bash
-./scripts/chirp_fs.py -p /dev/ttyACM0 ping
+./tools/chirp_fs.py -p /dev/ttyACM0 ping
 ```
 
 ### 3) Common commands
 
 ```bash
-./scripts/chirp_fs.py -p /dev/ttyACM0 list
-./scripts/chirp_fs.py -p /dev/ttyACM0 sync --delete scripts/ midi_maps/ third_party/wren-json/
-./scripts/chirp_fs.py -p /dev/ttyACM0 reboot
-./scripts/chirp_fs.py -p /dev/ttyACM0 monitor
+./tools/chirp_fs.py -p /dev/ttyACM0 list
+./tools/chirp_fs.py -p /dev/ttyACM0 sync --delete scripts/ midi_maps/ third_party/wren-json/
+./tools/chirp_fs.py -p /dev/ttyACM0 reboot
+./tools/chirp_fs.py -p /dev/ttyACM0 monitor
 ```
 
 ## Notes

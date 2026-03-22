@@ -39,7 +39,7 @@ upload:
 	@echo "Press the button on the Teensy, then wait..."
 	teensy_loader_cli --mcu=$(BOARD) -wvrs $(OUTPUT)/$(TARGET).ino.hex
 
-CHIRP_FS     = python3 scripts/chirp_fs.py -p $(PORT)
+CHIRP_FS     = python3 tools/chirp_fs.py -p $(PORT)
 SYNC_DIRS    = scripts/ midi_maps/ third_party/wren-json/
 DEVICE_WAIT  = 4
 
