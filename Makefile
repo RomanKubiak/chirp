@@ -9,7 +9,6 @@ FQBN = teensy:avr:teensy40
 USB = serialmidi
 
 EXTRA_INCLUDES = -Isrc/wren/include -Isrc/wren/optional -Isrc/wren/vm -Isrc/include
-TEENSY_HW_LIBS = $(HOME)/.arduino15/packages/teensy/hardware/avr/1.60.0/libraries
 
 # Set to 1 to enable raw MIDI1 byte logging (shows every byte received).
 DEBUG_MIDI1_RAW = 0
@@ -31,14 +30,6 @@ WREN_INITIAL_HEAP_BYTES = 262144
 WREN_MIN_HEAP_BYTES = 131072
 WREN_HEAP_GROWTH_PCT = 25
 
-# Set to 1 to enable the ST7735 SPI display.
-ENABLE_ST7735 = 1
-ST7735_ROTATION = 1
-ST7735_PIN_CS = 10
-ST7735_PIN_DC = 6
-ST7735_PIN_RST = 9
-ST7735_PIN_BL = -1
-
 EXTRA_CFLAGS = \
 	-DDEBUG_MIDI1_RAW=$(DEBUG_MIDI1_RAW) \
 	-DVERBOSE_MIDI_STATUS=$(VERBOSE_MIDI_STATUS) \
@@ -49,13 +40,7 @@ EXTRA_CFLAGS = \
 	-DENABLE_BOOT_DIAG=$(ENABLE_BOOT_DIAG) \
 	-DWREN_INITIAL_HEAP_BYTES=$(WREN_INITIAL_HEAP_BYTES) \
 	-DWREN_MIN_HEAP_BYTES=$(WREN_MIN_HEAP_BYTES) \
-	-DWREN_HEAP_GROWTH_PCT=$(WREN_HEAP_GROWTH_PCT) \
-	-DENABLE_ST7735=$(ENABLE_ST7735) \
-	-DST7735_ROTATION=$(ST7735_ROTATION) \
-	-DST7735_PIN_CS=$(ST7735_PIN_CS) \
-	-DST7735_PIN_DC=$(ST7735_PIN_DC) \
-	-DST7735_PIN_RST=$(ST7735_PIN_RST) \
-	-DST7735_PIN_BL=$(ST7735_PIN_BL)
+	-DWREN_HEAP_GROWTH_PCT=$(WREN_HEAP_GROWTH_PCT)
 # Arduino CLI
 ARDUINO_CLI = arduino-cli
 
@@ -78,7 +63,6 @@ $(BUILD)/$(TARGET).hex: $(SRC) | $(BUILD)
 		--fqbn $(FQBN):usb=$(USB) \
 		--build-path $(BUILD) \
 		--output-dir $(OUTPUT) \
-		--library $(TEENSY_HW_LIBS)/ST7735_t3 \
 		--build-property "build.extra_flags=$(EXTRA_INCLUDES) $(EXTRA_CFLAGS)" \
 		$(SKETCH_DIR)
 

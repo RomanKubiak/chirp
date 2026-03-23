@@ -43,29 +43,4 @@
 #define WREN_HEAP_GROWTH_PCT 25
 #endif
 
-// ST7735 display.
-#ifndef ENABLE_ST7735
-#define ENABLE_ST7735 1
-#endif
-
-#ifndef ST7735_ROTATION
-#define ST7735_ROTATION 1
-#endif
-
-#ifndef ST7735_PIN_CS
-#define ST7735_PIN_CS 10
-#endif
-
-#ifndef ST7735_PIN_DC
-#define ST7735_PIN_DC 9
-#endif
-
-#ifndef ST7735_PIN_RST
-#define ST7735_PIN_RST 8
-#endif
-
-#ifndef ST7735_PIN_BL
-#define ST7735_PIN_BL -1
-#endif
-
 #endif // CHIRP_CONFIG_H

@@ -22,11 +22,6 @@ clock_t _times(void *buf) { return 0; }
 #include "wren_host.h"
 #include "usb_frame_handler.h"
 #include "chirp_fs.h"
-#include "display_lvgl.h"
-
-#if ENABLE_ST7735
-#include <ST7735_t3.h>
-#endif
 
 // ── Serial MIDI port instances (must live in the sketch) ──────────────────────
 MIDI_CREATE_INSTANCE(HardwareSerial, Serial1, MIDI1);
@@ -169,8 +164,6 @@ void setup()
     logSetup(bridgeReady   ? "[BOOT] Wren MIDI bridge ready"      : "[BOOT] Wren MIDI bridge unavailable");
     logSetup(scriptsReady  ? "[BOOT] /scripts Wren scripts ready" : "[BOOT] /scripts Wren scripts incomplete");
 
-    displayLvglSetup();
-
     logDiagnosticSnapshot("post-init");
 
     initializeMidiPorts();
@@ -218,8 +211,6 @@ void loop()
     }
 
     if (!hadWork) gDiag.idleLoops = satAddU32(gDiag.idleLoops, 1);
-
-    displayLvglTask();
 
     yield();
 
