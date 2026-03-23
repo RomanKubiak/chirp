@@ -1,6 +1,6 @@
 # Project
 TARGET = chirp
-SKETCH_DIR = chirp
+SKETCH_DIR = .
 SRC = $(SKETCH_DIR)/chirp.ino
 BUILD = build
 OUTPUT = output
@@ -9,7 +9,53 @@ FQBN = teensy:avr:teensy40
 USB = serialmidi
 
 EXTRA_INCLUDES = -Isrc/wren/include -Isrc/wren/optional -Isrc/wren/vm -Isrc/include
+TEENSY_HW_LIBS = $(HOME)/.arduino15/packages/teensy/hardware/avr/1.60.0/libraries
 
+# Set to 1 to enable raw MIDI1 byte logging (shows every byte received).
+DEBUG_MIDI1_RAW = 0
+# Set to 1 to enable verbose MIDI read status (shows True/False on each loop).
+VERBOSE_MIDI_STATUS = 0
+# Set to 1 to enable debug logging for MIDI events and Wren print/error logs.
+DEBUG_LOGGING = 0
+# Set to 1 to mirror runtime logs to Serial in addition to control messages.
+DEBUG_RUNTIME_SERIAL = 0
+# Set to 1 to emit periodic diagnostics in loop().
+ENABLE_PERIODIC_DIAG = 0
+# Periodic diagnostics interval in milliseconds.
+PERIODIC_DIAG_INTERVAL_MS = 1000
+# Set to 1 to emit compact boot diagnostics.
+ENABLE_BOOT_DIAG = 1
+
+# Wren heap tuning for Teensy 4.0 RAM constraints.
+WREN_INITIAL_HEAP_BYTES = 262144
+WREN_MIN_HEAP_BYTES = 131072
+WREN_HEAP_GROWTH_PCT = 25
+
+# Set to 1 to enable the ST7735 SPI display.
+ENABLE_ST7735 = 1
+ST7735_ROTATION = 1
+ST7735_PIN_CS = 10
+ST7735_PIN_DC = 6
+ST7735_PIN_RST = 9
+ST7735_PIN_BL = -1
+
+EXTRA_CFLAGS = \
+	-DDEBUG_MIDI1_RAW=$(DEBUG_MIDI1_RAW) \
+	-DVERBOSE_MIDI_STATUS=$(VERBOSE_MIDI_STATUS) \
+	-DDEBUG_LOGGING=$(DEBUG_LOGGING) \
+	-DDEBUG_RUNTIME_SERIAL=$(DEBUG_RUNTIME_SERIAL) \
+	-DENABLE_PERIODIC_DIAG=$(ENABLE_PERIODIC_DIAG) \
+	-DPERIODIC_DIAG_INTERVAL_MS=$(PERIODIC_DIAG_INTERVAL_MS) \
+	-DENABLE_BOOT_DIAG=$(ENABLE_BOOT_DIAG) \
+	-DWREN_INITIAL_HEAP_BYTES=$(WREN_INITIAL_HEAP_BYTES) \
+	-DWREN_MIN_HEAP_BYTES=$(WREN_MIN_HEAP_BYTES) \
+	-DWREN_HEAP_GROWTH_PCT=$(WREN_HEAP_GROWTH_PCT) \
+	-DENABLE_ST7735=$(ENABLE_ST7735) \
+	-DST7735_ROTATION=$(ST7735_ROTATION) \
+	-DST7735_PIN_CS=$(ST7735_PIN_CS) \
+	-DST7735_PIN_DC=$(ST7735_PIN_DC) \
+	-DST7735_PIN_RST=$(ST7735_PIN_RST) \
+	-DST7735_PIN_BL=$(ST7735_PIN_BL)
 # Arduino CLI
 ARDUINO_CLI = arduino-cli
 
@@ -32,7 +78,8 @@ $(BUILD)/$(TARGET).hex: $(SRC) | $(BUILD)
 		--fqbn $(FQBN):usb=$(USB) \
 		--build-path $(BUILD) \
 		--output-dir $(OUTPUT) \
-		--build-property "build.extra_flags=$(EXTRA_INCLUDES)" \
+		--library $(TEENSY_HW_LIBS)/ST7735_t3 \
+		--build-property "build.extra_flags=$(EXTRA_INCLUDES) $(EXTRA_CFLAGS)" \
 		$(SKETCH_DIR)
 
 upload:

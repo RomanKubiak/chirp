@@ -25,6 +25,7 @@ From the current build configuration/logs:
   - `MIDI Library` version `5.0.2`
   - `LittleFS` version `1.0.0`
   - `SPI` version `1.0`
+  - `ST7735_t3` (from Teensy core package)
 
 ## Repository Layout
 
@@ -61,6 +62,28 @@ Full flow (build + upload + filesystem sync):
 ```bash
 make upload-all
 ```
+
+## ST7735 Display
+
+The firmware includes optional ST7735_t3 support for SPI TFT displays.
+
+- Enable/disable in `Makefile` with `ENABLE_ST7735`.
+- Display and pin defaults are configured in `Makefile`:
+  - `ST7735_ROTATION`
+  - `ST7735_PIN_CS`, `ST7735_PIN_DC`, `ST7735_PIN_RST`, `ST7735_PIN_BL`
+
+Example wiring defaults currently used by firmware:
+
+- `CS -> 10`
+- `DC -> 9`
+- `RST -> 8`
+- `BL -> disabled` (`-1`, optional)
+- `SCK/MOSI -> Teensy hardware SPI pins`
+
+At boot the firmware logs one of:
+
+- `[BOOT] ST7735 ready`
+- `[BOOT] Display disabled`
 
 ## Python Host Tool Setup (`tools/chirp_fs.py`)
 
