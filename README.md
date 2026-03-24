@@ -1,5 +1,7 @@
 # Chirp
 
+Consider this early alpha software for now.
+
 Chirp is a Teensy 4.0 MIDI processing firmware with an on-device Wren runtime, USB control protocol, and flash-backed script/data storage.
 
 ## Hardware
