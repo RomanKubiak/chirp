@@ -38,6 +38,13 @@ public:
     static bool initialize(WrenVM *vm);
     static void dispatchEvent(WrenVM *vm, const MIDIMessage &event);
     static void shutdown(WrenVM *vm);
+
+    static void clearRegisteredScripts();
+    static void registerScriptName(const char *scriptName);
+    static bool setActiveScriptName(const char *scriptName);
+    static void clearActiveScriptSelection();
+    static void beginScriptContext(const char *scriptName);
+    static void endScriptContext();
 };
 
 #endif // WREN_MIDI_BRIDGE_H

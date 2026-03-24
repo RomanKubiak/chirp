@@ -1,6 +1,7 @@
 #ifndef WREN_HOST_H
 #define WREN_HOST_H
 
+#include <Arduino.h>
 #include "wren.hpp"
 
 // ── Error capture buffer (written by errorFn, read by handleFrame) ────────────
@@ -17,5 +18,19 @@ WrenInterpretResult interpretWrenWithCapturedError(const char *module, const cha
 // ── Wren bootstrap ────────────────────────────────────────────────────────────
 bool initializeWrenRuntime();
 bool executeStoredWrenScriptsOnBoot();
+bool prepareStoredWrenScriptsOnBoot();
+size_t listStoredWrenScripts(String *namesOut, size_t maxNames);
+bool runStoredWrenScript(const char *name);
+bool runWrenUserScriptSource(const char *scriptName, const char *source);
+const char *bootDisplayScriptName();
+
+// ── Runtime script load telemetry ────────────────────────────────────────────
+const char *lastLoadedWrenScriptName();
+const char *lastLoadedWrenModuleName();
+uint32_t lastLoadedWrenScriptBytes();
+uint32_t totalWrenScriptLoadSuccesses();
+uint32_t totalWrenScriptLoadErrors();
+const char *lastWrenScriptError();
+const char *lastWrenScriptErrorScriptName();
 
 #endif // WREN_HOST_H

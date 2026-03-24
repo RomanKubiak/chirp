@@ -2,14 +2,14 @@
 #define SCRIPT_STORAGE_H
 
 #include <Arduino.h>
-#include <LittleFS.h>
+#include "chirp_fs.h"
 
 class ScriptStorage
 {
 public:
     static constexpr size_t kDefaultFsBytes = 512 * 1024;
 
-    ScriptStorage(LittleFS_Program &fs,
+    ScriptStorage(ChirpFS &fs,
                   size_t fsSizeBytes = kDefaultFsBytes,
                   const char *scriptsDir = "/scripts");
 
@@ -40,7 +40,7 @@ private:
     String normalizeAbsolutePath(const char *path) const;
     bool isValidScriptName(const char *name) const;
 
-    LittleFS_Program &fs_;
+    ChirpFS &fs_;
     size_t fsSizeBytes_;
     const char *scriptsDir_;
     bool mounted_;

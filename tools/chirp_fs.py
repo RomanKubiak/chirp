@@ -37,7 +37,7 @@ Examples
     chirp_fs.py run /scripts/arp.wren
     cat patch.wren | chirp_fs.py write /scripts/patch.wren
     chirp_fs.py delete /scripts/arp.wren
-    chirp_fs.py stat /scripts/_runtime.wren
+    chirp_fs.py stat /scripts/builtin/_runtime.wren
     chirp_fs.py monitor                 # Indefinite; Ctrl-C to stop
     chirp_fs.py monitor -d 10           # Monitor for 10 seconds
     chirp_fs.py sync                    # Upload scripts/ and midi_maps/ to device
@@ -171,6 +171,8 @@ def _repo_root() -> Path:
 
 def _target_base_for_dir(local_dir: Path) -> str:
     value = str(local_dir).replace("\\", "/")
+    if value.endswith("scripts/builtin"):
+        return "/scripts/builtin"
     if value.endswith("third_party/wren-json"):
         return "/scripts/builtin"
     if value.endswith("midi_maps"):
@@ -178,6 +180,54 @@ def _target_base_for_dir(local_dir: Path) -> str:
     if value.endswith("scripts"):
         return "/scripts/user"
     return "/scripts/user"
+
+
+_BUILTIN_RUNTIME_ORDER = [
+    "clock.wren",
+    "debug.wren",
+    "file.wren",
+    "config.wren",
+    "script.wren",
+    "display.wren",
+    "midi.wren",
+    "_runtime.wren",
+]
+
+
+def _strip_import_lines(text: str) -> str:
+    lines = []
+    for line in text.splitlines():
+        if line.lstrip().startswith("import "):
+            continue
+        lines.append(line)
+    return "\n".join(lines).strip()
+
+
+def _minify_wren_text(text: str) -> str:
+    out = []
+    for raw in text.splitlines():
+        line = raw.rstrip()
+        stripped = line.lstrip()
+        if not stripped:
+            continue
+        if stripped.startswith("//"):
+            continue
+        out.append(line)
+    return "\n".join(out).strip()
+
+
+def _build_builtin_runtime_bundle(local_dir: Path) -> str:
+    parts = []
+
+    for name in _BUILTIN_RUNTIME_ORDER:
+        source_path = local_dir / name
+        if not source_path.is_file():
+            raise FileNotFoundError(f"Missing builtin runtime source: {source_path}")
+        source_text = source_path.read_text(encoding="utf-8")
+        parts.append(_strip_import_lines(source_text))
+
+    combined = "\n".join(parts)
+    return _minify_wren_text(combined) + "\n"
 
 
 def _build_readme_text() -> str:
@@ -490,7 +540,7 @@ class ChirpClient:
         return int.from_bytes(data[1:5], byteorder="little", signed=False)
 
     def get_space(self) -> dict:
-        """Return filesystem info dict with keys: total, used, free, block_size, block_count, block_cycles."""
+        """Return filesystem info dict with keys: total, used, free, block_size, block_count, block_cycles, backend."""
         rtype, data = self._request(MSG_FS_SPACE_REQ)
         if rtype != MSG_FS_SPACE_RESP:
             raise RuntimeError(f"Unexpected response: 0x{rtype:02X}")
@@ -504,6 +554,14 @@ class ChirpClient:
             info["block_size"]   = int.from_bytes(data[9:13],  byteorder="little", signed=False)
             info["block_count"]  = int.from_bytes(data[13:17], byteorder="little", signed=False)
             info["block_cycles"] = int.from_bytes(data[17:21], byteorder="little", signed=True)
+        if len(data) >= 22:
+            backend_code = data[21]
+            backend_name = {
+                0: "none",
+                1: "sd",
+                2: "littlefs",
+            }.get(backend_code, f"unknown({backend_code})")
+            info["backend"] = backend_name
         return info
 
     def run_script(self, path: str) -> str:
@@ -549,6 +607,7 @@ class ChirpClient:
 
                 Layout mapping:
                     scripts/               -> /scripts/user/
+                    scripts/builtin/       -> /scripts/builtin/
                     third_party/wren-json/ -> /scripts/builtin/
                     midi_maps/             -> /userdata/
 
@@ -560,28 +619,37 @@ class ChirpClient:
             extensions = [".wren", ".json"]
 
         local_files: dict = {}  # device_path -> Path
+        generated_files: dict = {}  # device_path -> (label, source)
         for d in dirs:
             p = Path(d)
             if not p.is_dir():
                 print(f"Warning: directory '{d}' not found, skipping", file=sys.stderr)
                 continue
             target_base = _target_base_for_dir(p)
+
+            if target_base == "/scripts/builtin" and p.name == "builtin":
+                generated_files["/scripts/builtin/_runtime.wren"] = (
+                    "<generated builtin runtime>",
+                    _build_builtin_runtime_bundle(p),
+                )
+                continue
+
             for f in sorted(p.iterdir()):
                 if not f.is_file() or f.suffix not in extensions:
                     continue
-                if target_base == "/scripts/builtin" and f.name != "json.wren":
+                if target_base == "/scripts/builtin" and p.name == "wren-json" and f.name != "json.wren":
                     continue
                 device_path = _normalize_device_path(f"{target_base}/{f.name}")
                 local_files[device_path] = f
 
         # Always publish a firmware metadata README to flash.
-        local_files["/README.txt"] = None
+        generated_files["/README.txt"] = ("<generated README>", _build_readme_text())
 
         deleted = 0
         if delete:
             managed_prefixes = ("/scripts/user/", "/scripts/builtin/", "/userdata/")
             existing_paths = set(self.list_files())
-            wanted_paths = set(local_files.keys())
+            wanted_paths = set(local_files.keys()) | set(generated_files.keys())
             # Delete first so uploads have maximum free space available.
             for path in sorted(existing_paths - wanted_paths):
                 if path == "/README.txt":
@@ -597,17 +665,23 @@ class ChirpClient:
                     print(f"  ERROR deleting {path}: {e}", file=sys.stderr)
 
         uploaded = errors = 0
-        for device_path, local_path in sorted(local_files.items()):
-            source = _build_readme_text() if local_path is None else local_path.read_text(encoding="utf-8")
+        all_paths = sorted(set(local_files.keys()) | set(generated_files.keys()))
+        for device_path in all_paths:
+            generated = generated_files.get(device_path)
+            local_path = local_files.get(device_path)
+            if generated is not None:
+                src_name, source = generated
+            else:
+                src_name = str(local_path)
+                source = local_path.read_text(encoding="utf-8")
             try:
                 self.write_file(device_path, source)
                 if verbose:
-                    src_name = "<generated README>" if local_path is None else str(local_path)
                     print(f"  {src_name}  ->  {device_path}"
                           f"  ({len(source.encode())} bytes)")
                 uploaded += 1
             except Exception as e:
-                label = device_path if local_path is None else str(local_path)
+                label = src_name
                 print(f"  ERROR uploading {label}: {e}", file=sys.stderr)
                 errors += 1
 
@@ -671,8 +745,8 @@ def main() -> None:
 
     p_sync = sub.add_parser("sync",
                             help="Upload all local scripts and maps to device")
-    p_sync.add_argument("dirs", nargs="*", default=["scripts/", "third_party/wren-json/", "midi_maps/"],
-                        help="Directories to sync (default: scripts/ third_party/wren-json/ midi_maps/)")
+    p_sync.add_argument("dirs", nargs="*", default=["scripts/", "scripts/builtin/", "third_party/wren-json/", "midi_maps/"],
+                        help="Directories to sync (default: scripts/ scripts/builtin/ third_party/wren-json/ midi_maps/)")
     p_sync.add_argument("--ext", nargs="+", default=[".wren", ".json"],
                         metavar="EXT",
                         help="File extensions to include (default: .wren .json)")
@@ -732,11 +806,19 @@ def main() -> None:
 
                     print()
                     print(f"Filesystem: {_fmt(used)} / {_fmt(total)} used ({pct}%),  {_fmt(free)} free")
+                    if "backend" in info:
+                        print(f"Backend: {info['backend']}")
                     if "block_size" in info:
                         bc = info["block_cycles"]
-                        wear = f"{bc} erase cycles" if bc > 0 else "disabled"
+                        backend = info.get("backend", "")
+                        if backend == "sd":
+                            unit_label = "Clusters"
+                            wear = "n/a"
+                        else:
+                            unit_label = "Blocks"
+                            wear = f"{bc} erase cycles" if bc > 0 else "disabled"
                         used_blocks = used // info["block_size"] if info["block_size"] else 0
-                        print(f"  Blocks: {info['block_size']:,} B × {info['block_count']}  |  "
+                        print(f"  {unit_label}: {info['block_size']:,} B × {info['block_count']}  |  "
                               f"Used: {used_blocks}/{info['block_count']}  |  "
                               f"Wear-leveling: {wear}")
                 except Exception:

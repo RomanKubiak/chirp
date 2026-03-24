@@ -17,6 +17,7 @@ volatile uint16_t   gMidiOutQueueHighWater = 0;
 volatile uint16_t   gMidiOutQueueCapacity  = 0;
 
 static uint16_t gMidiOutQueueHighWaterLocal = 0;
+static MidiPreDispatchHookFn gMidiPreDispatchHook = nullptr;
 
 // ── MIDI input staging buffer (used during hot-reload) ────────────────────────
 static constexpr uint16_t kMidiStagingSize = 128;
@@ -78,6 +79,11 @@ void setMidiOutQueueStats(uint16_t depth, uint16_t highWater, uint16_t capacity)
     gMidiOutQueueDepth    = depth;
     gMidiOutQueueHighWater = highWater;
     gMidiOutQueueCapacity  = capacity;
+}
+
+void setMidiPreDispatchHook(MidiPreDispatchHookFn hook)
+{
+    gMidiPreDispatchHook = hook;
 }
 
 static uint16_t midiOutQueueCount(uint16_t head, uint16_t tail)
@@ -184,6 +190,19 @@ uint16_t processMidiInput(uint16_t maxEvents, uint32_t budgetUs, bool &budgetExc
     while (processed < maxEvents && midiDevices.readNext(event))
     {
         logMidiMessage(event);
+
+        if (gMidiPreDispatchHook && gMidiPreDispatchHook(event))
+        {
+            gDiag.midiEvents = satAddU32(gDiag.midiEvents, 1);
+            processed++;
+            if (static_cast<uint32_t>(micros() - startUs) >= budgetUs)
+            {
+                budgetExceeded = true;
+                break;
+            }
+            if ((processed % kYieldEvery) == 0) yield();
+            continue;
+        }
 
         const uint32_t t0 = micros();
         WrenMidiBridge::dispatchEvent(vm, event);

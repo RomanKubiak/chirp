@@ -4,6 +4,7 @@
 #include <cctype>
 #include <cstring>
 #include <string>
+#include "chirp_display.h"
 
 #ifndef DEBUG_WREN_BRIDGE_SERIAL
 #define DEBUG_WREN_BRIDGE_SERIAL 0
@@ -18,6 +19,44 @@
 namespace
 {
 constexpr const char *kWrenRuntimeModule = "chirp_runtime";
+
+bool isBuiltinModuleName(const char *name)
+{
+    if (name == nullptr || name[0] == '\0') return false;
+    for (const char *p = name; *p != '\0'; ++p)
+    {
+        const unsigned char ch = static_cast<unsigned char>(*p);
+        if (!(std::isalnum(ch) || ch == '_')) return false;
+    }
+    return true;
+}
+
+bool isNativeBridgeModule(const char *module)
+{
+    static constexpr const char *kModules[] = {
+        "chirp_runtime",
+        "clock",
+        "debug",
+        "file",
+        "config",
+        "display",
+        "script",
+        "midi"
+    };
+
+    if (module == nullptr) return false;
+    for (const char *name : kModules)
+    {
+        if (std::strcmp(module, name) == 0) return true;
+    }
+    return false;
+}
+
+String builtinModulePath(const char *name)
+{
+    if (!isBuiltinModuleName(name)) return String();
+    return String("/scripts/builtin/") + name + ".wren";
+}
 
 const char kEmbeddedWrenMidiRuntime[] = R"WREN(
 
@@ -58,6 +97,25 @@ foreign class ConfigNative {
     foreign static parse(text)
 }
 
+foreign class DisplayNative {
+    foreign static showInstrument(prev, current, next)
+    foreign static showKit(kitName)
+    foreign static showParameter(paramName, cc, value)
+    foreign static showValue(value)
+    foreign static showStatus(statusText)
+}
+
+foreign class ScriptNative {
+    foreign static loadingName()
+    foreign static enterContext(name)
+    foreign static leaveContext()
+    foreign static canDraw()
+    foreign static activeDisplayScript()
+    foreign static nextDisplayScript()
+    foreign static prevDisplayScript()
+    foreign static selectDisplayScript(name)
+}
+
 class Clock {
     static ticksMs() {
         return TeensyClockNative.ticksMs()
@@ -87,6 +145,40 @@ class Log {
 
     static error(message) {
         return DebugNative.error("%(message)")
+    }
+}
+
+// ── Display UI ─────────────────────────────────────────────────────────────────
+// Shows instrument/parameter being edited on the 1.8" display
+//
+//   Display.showInstrument("Kick", "Snare", "Hihat")
+//   Display.showParameter("Pitch", 74, 96)
+//   Display.showStatus("Script loaded")
+
+class Display {
+    static showInstrument(prev, current, next) {
+        if (!Script.canDraw) return
+        DisplayNative.showInstrument(prev, current, next)
+    }
+
+    static showKit(kitName) {
+        if (!Script.canDraw) return
+        DisplayNative.showKit(kitName)
+    }
+    
+    static showParameter(paramName, cc, value) {
+        if (!Script.canDraw) return
+        DisplayNative.showParameter(paramName, cc, value)
+    }
+    
+    static showValue(value) {
+        if (!Script.canDraw) return
+        DisplayNative.showValue(value)
+    }
+    
+    static showStatus(statusText) {
+        if (!Script.canDraw) return
+        DisplayNative.showStatus(statusText)
     }
 }
 
@@ -337,6 +429,25 @@ class HuiDecoder {
     }
 }
 
+class Script {
+    static wrapListener(callback) {
+        var owner = ScriptNative.loadingName()
+        return {
+            "owner": owner,
+            "fn": callback
+        }
+    }
+
+    static canDraw { ScriptNative.canDraw() }
+
+    static onUnload(fn) { __fn = fn }
+    static callUnload() {
+        if (__fn is Fn) __fn.call()
+        __fn = null
+    }
+}
+Script.onUnload(null)
+
 class MidiApi {
     construct new() {
         _eventListeners = []
@@ -349,8 +460,9 @@ class MidiApi {
     }
 
     listen(callback) {
-        _eventListeners.add(callback)
-        return callback
+        var wrapped = Script.wrapListener(callback)
+        _eventListeners.add(wrapped)
+        return wrapped
     }
 
     onEvent(callback) {
@@ -358,33 +470,39 @@ class MidiApi {
     }
 
     onNoteOn(callback) {
-        _noteOnListeners.add(callback)
-        return callback
+        var wrapped = Script.wrapListener(callback)
+        _noteOnListeners.add(wrapped)
+        return wrapped
     }
 
     onNoteOff(callback) {
-        _noteOffListeners.add(callback)
-        return callback
+        var wrapped = Script.wrapListener(callback)
+        _noteOffListeners.add(wrapped)
+        return wrapped
     }
 
     onControlChange(callback) {
-        _controlChangeListeners.add(callback)
-        return callback
+        var wrapped = Script.wrapListener(callback)
+        _controlChangeListeners.add(wrapped)
+        return wrapped
     }
 
     onProgramChange(callback) {
-        _programChangeListeners.add(callback)
-        return callback
+        var wrapped = Script.wrapListener(callback)
+        _programChangeListeners.add(wrapped)
+        return wrapped
     }
 
     onMcuMessage(callback) {
-        _mcuListeners.add(callback)
-        return callback
+        var wrapped = Script.wrapListener(callback)
+        _mcuListeners.add(wrapped)
+        return wrapped
     }
 
     onHuiMessage(callback) {
-        _huiListeners.add(callback)
-        return callback
+        var wrapped = Script.wrapListener(callback)
+        _huiListeners.add(wrapped)
+        return wrapped
     }
 
     clearListeners() {
@@ -458,7 +576,13 @@ class MidiApi {
         if (event.isProgramChange) emitListeners(_programChangeListeners, event)
         if (_mcuListeners.count > 0) {
             var m = McuDecoder.decode(event)
-            if (m != null) emitListeners(_mcuListeners, m)
+            if (m != null) {
+                if (m.name == "cursor_right" && m.state == "press") ScriptNative.nextDisplayScript()
+                if (m.name == "cursor_left" && m.state == "press") ScriptNative.prevDisplayScript()
+                if (m.name == "jog" && m.state == "cw") ScriptNative.nextDisplayScript()
+                if (m.name == "jog" && m.state == "ccw") ScriptNative.prevDisplayScript()
+                emitListeners(_mcuListeners, m)
+            }
         }
         if (_huiListeners.count > 0) {
             var h = HuiDecoder.decode(event)
@@ -468,51 +592,16 @@ class MidiApi {
 
     emitListeners(listeners, event) {
         for (listener in listeners) {
-            listener.call(event)
+            var owner = listener["owner"]
+            var fn = listener["fn"]
+            ScriptNative.enterContext(owner)
+            fn.call(event)
+            ScriptNative.leaveContext()
         }
     }
 }
 
 var Midi = MidiApi.new()
-
-// ── Script lifecycle hooks ─────────────────────────────────────────────────
-// Scripts can register an optional teardown callback:
-//
-//   Script.onUnload {
-//     Midi.clearListeners()
-//     Log.info("unloaded")
-//   }
-//
-// The firmware calls Script.callUnload() before hot-reloading a script,
-// then clears all Midi listeners automatically so the new script starts clean.
-
-class Script {
-    static onUnload(fn) { __fn = fn }
-    static callUnload() {
-        if (__fn is Fn) __fn.call()
-        __fn = null
-    }
-}
-Script.onUnload(null)
-)WREN";
-
-const char kEmbeddedWrenMidiExample[] = R"WREN(
-System.print("Embedded MIDI example registering listeners")
-
-Midi.onEvent(Fn.new { |event|
-    if (event.typeName == "timingClock") return
-    System.print("[MIDI] %(event.portName) %(event.typeName) ch=%(event.channelNumber) data1=%(event.data1) data2=%(event.data2)")
-})
-
-Midi.onNoteOn(Fn.new { |event|
-    System.print("[NOTE ON] %(event.portName) ch=%(event.channelNumber) note=%(event.note) vel=%(event.velocity)")
-})
-
-Midi.onControlChange(Fn.new { |event|
-    System.print("[CC] %(event.portName) ch=%(event.channelNumber) cc=%(event.controller) value=%(event.value)")
-})
-
-System.print("Embedded MIDI example ready")
 )WREN";
 
 WrenHandle *gMidiClassHandle = nullptr;
@@ -520,6 +609,94 @@ WrenHandle *gDispatchHandle = nullptr;
 MidiOutputSendFn gOutputSendFn = nullptr;
 WrenRuntimeLogFn gRuntimeLogFn = nullptr;
 WrenFsProvider   gFsProvider   = {};
+
+constexpr size_t kMaxManagedScripts = 32;
+constexpr size_t kMaxManagedScriptName = 48;
+char   gManagedScriptNames[kMaxManagedScripts][kMaxManagedScriptName] = {};
+size_t gManagedScriptCount = 0;
+int    gActiveDisplayScriptIndex = -1;
+char   gCurrentScriptContext[kMaxManagedScriptName] = {};
+
+void normalizeScriptName(const char *src, char *dst, size_t dstSize)
+{
+    if (dstSize == 0) return;
+    dst[0] = '\0';
+    if (src == nullptr || src[0] == '\0') return;
+
+    snprintf(dst, dstSize, "%s", src);
+    const size_t len = std::strlen(dst);
+    if (len > 5 && std::strcmp(dst + (len - 5), ".wren") == 0)
+        dst[len - 5] = '\0';
+}
+
+bool scriptNameEquals(const char *a, const char *b)
+{
+    if (a == nullptr || b == nullptr) return false;
+    return std::strcmp(a, b) == 0;
+}
+
+const char *activeDisplayScriptName()
+{
+    if (gActiveDisplayScriptIndex < 0 ||
+        gActiveDisplayScriptIndex >= static_cast<int>(gManagedScriptCount))
+        return nullptr;
+    return gManagedScriptNames[gActiveDisplayScriptIndex];
+}
+
+void showScriptMenuStatus()
+{
+    if (gManagedScriptCount == 0) return;
+
+    const char *name = activeDisplayScriptName();
+    if (name == nullptr || name[0] == '\0') return;
+
+    char status[64] = {0};
+    snprintf(status, sizeof(status), "< %s >", name);
+    ChirpDisplay::showStatus(status);
+}
+
+bool isCurrentScriptAllowedToDraw()
+{
+    if (gManagedScriptCount == 0) return true;
+
+    const char *active = activeDisplayScriptName();
+    if (active == nullptr || active[0] == '\0') return false;
+
+    if (gCurrentScriptContext[0] == '\0') return false;
+    return scriptNameEquals(gCurrentScriptContext, active);
+}
+
+bool selectActiveScriptByName(const char *name)
+{
+    if (name == nullptr || name[0] == '\0') return false;
+    for (size_t i = 0; i < gManagedScriptCount; i++)
+    {
+        if (scriptNameEquals(gManagedScriptNames[i], name))
+        {
+            gActiveDisplayScriptIndex = static_cast<int>(i);
+            showScriptMenuStatus();
+            return true;
+        }
+    }
+    return false;
+}
+
+void selectRelativeScript(int delta)
+{
+    if (gManagedScriptCount == 0 || delta == 0) return;
+    if (gActiveDisplayScriptIndex < 0)
+    {
+        gActiveDisplayScriptIndex = 0;
+        showScriptMenuStatus();
+        return;
+    }
+
+    int next = gActiveDisplayScriptIndex + delta;
+    while (next < 0) next += static_cast<int>(gManagedScriptCount);
+    while (next >= static_cast<int>(gManagedScriptCount)) next -= static_cast<int>(gManagedScriptCount);
+    gActiveDisplayScriptIndex = next;
+    showScriptMenuStatus();
+}
 
 void releaseHandle(WrenVM *vm, WrenHandle *&handle)
 {
@@ -694,6 +871,107 @@ void debugNativeWarn(WrenVM *vm)
 void debugNativeError(WrenVM *vm)
 {
     logFromWren(vm, "ERROR");
+}
+
+// ── DisplayNative handlers ────────────────────────────────────────────────────
+void displayNativeShowInstrument(WrenVM *vm)
+{
+    const char *prev = wrenGetSlotString(vm, 1);
+    const char *current = wrenGetSlotString(vm, 2);
+    const char *next = wrenGetSlotString(vm, 3);
+    
+    ChirpDisplay::showInstrument(prev, current, next);
+}
+
+void displayNativeShowParameter(WrenVM *vm)
+{
+    const char *paramName = wrenGetSlotString(vm, 1);
+    uint8_t cc = static_cast<uint8_t>(wrenGetSlotDouble(vm, 2));
+    uint8_t value = static_cast<uint8_t>(wrenGetSlotDouble(vm, 3));
+    
+    ChirpDisplay::showParameter(paramName, cc, value);
+}
+
+void displayNativeShowKit(WrenVM *vm)
+{
+    const char *kitName = wrenGetSlotString(vm, 1);
+    ChirpDisplay::showKit(kitName);
+}
+
+void displayNativeShowValue(WrenVM *vm)
+{
+    uint8_t value = static_cast<uint8_t>(wrenGetSlotDouble(vm, 1));
+    ChirpDisplay::showValue(value);
+}
+
+void displayNativeShowStatus(WrenVM *vm)
+{
+    const char *statusText = wrenGetSlotString(vm, 1);
+    ChirpDisplay::showStatus(statusText);
+}
+
+void scriptNativeLoadingName(WrenVM *vm)
+{
+    wrenSetSlotString(vm, 0, gCurrentScriptContext);
+}
+
+void scriptNativeEnterContext(WrenVM *vm)
+{
+    if (wrenGetSlotType(vm, 1) != WREN_TYPE_STRING)
+    {
+        gCurrentScriptContext[0] = '\0';
+        return;
+    }
+
+    char normalized[kMaxManagedScriptName] = {0};
+    normalizeScriptName(wrenGetSlotString(vm, 1), normalized, sizeof(normalized));
+    snprintf(gCurrentScriptContext, sizeof(gCurrentScriptContext), "%s", normalized);
+}
+
+void scriptNativeLeaveContext(WrenVM *vm)
+{
+    (void)vm;
+    gCurrentScriptContext[0] = '\0';
+}
+
+void scriptNativeCanDraw(WrenVM *vm)
+{
+    wrenSetSlotBool(vm, 0, isCurrentScriptAllowedToDraw());
+}
+
+void scriptNativeActiveDisplayScript(WrenVM *vm)
+{
+    const char *active = activeDisplayScriptName();
+    if (active == nullptr) {
+        wrenSetSlotNull(vm, 0);
+        return;
+    }
+    wrenSetSlotString(vm, 0, active);
+}
+
+void scriptNativeNextDisplayScript(WrenVM *vm)
+{
+    (void)vm;
+    selectRelativeScript(1);
+}
+
+void scriptNativePrevDisplayScript(WrenVM *vm)
+{
+    (void)vm;
+    selectRelativeScript(-1);
+}
+
+void scriptNativeSelectDisplayScript(WrenVM *vm)
+{
+    if (wrenGetSlotType(vm, 1) != WREN_TYPE_STRING)
+    {
+        wrenSetSlotBool(vm, 0, false);
+        return;
+    }
+
+    char normalized[kMaxManagedScriptName] = {0};
+    normalizeScriptName(wrenGetSlotString(vm, 1), normalized, sizeof(normalized));
+    wrenSetSlotBool(vm, 0, selectActiveScriptByName(normalized));
 }
 
 // ── Path validation ────────────────────────────────────────────────────────
@@ -1041,7 +1319,7 @@ WrenForeignMethodFn bindMidiForeignMethod(WrenVM *vm,
 {
     (void)vm;
 
-    if (std::strcmp(module, kWrenRuntimeModule) != 0)
+    if (!isNativeBridgeModule(module))
     {
         return nullptr;
     }
@@ -1093,6 +1371,27 @@ WrenForeignMethodFn bindMidiForeignMethod(WrenVM *vm,
         if (std::strcmp(signature, "ticksUs()") == 0) return teensyClockNativeTicksUs;
     }
 
+    if (std::strcmp(className, "DisplayNative") == 0)
+    {
+        if (std::strcmp(signature, "showInstrument(_,_,_)") == 0) return displayNativeShowInstrument;
+        if (std::strcmp(signature, "showKit(_)") == 0) return displayNativeShowKit;
+        if (std::strcmp(signature, "showParameter(_,_,_)") == 0) return displayNativeShowParameter;
+        if (std::strcmp(signature, "showValue(_)") == 0) return displayNativeShowValue;
+        if (std::strcmp(signature, "showStatus(_)") == 0) return displayNativeShowStatus;
+    }
+
+    if (std::strcmp(className, "ScriptNative") == 0)
+    {
+        if (std::strcmp(signature, "loadingName()") == 0) return scriptNativeLoadingName;
+        if (std::strcmp(signature, "enterContext(_)") == 0) return scriptNativeEnterContext;
+        if (std::strcmp(signature, "leaveContext()") == 0) return scriptNativeLeaveContext;
+        if (std::strcmp(signature, "canDraw()") == 0) return scriptNativeCanDraw;
+        if (std::strcmp(signature, "activeDisplayScript()") == 0) return scriptNativeActiveDisplayScript;
+        if (std::strcmp(signature, "nextDisplayScript()") == 0) return scriptNativeNextDisplayScript;
+        if (std::strcmp(signature, "prevDisplayScript()") == 0) return scriptNativePrevDisplayScript;
+        if (std::strcmp(signature, "selectDisplayScript(_)") == 0) return scriptNativeSelectDisplayScript;
+    }
+
     return nullptr;
 }
 
@@ -1103,29 +1402,18 @@ WrenForeignClassMethods bindMidiForeignClass(WrenVM *vm,
     (void)vm;
 
     WrenForeignClassMethods methods = {nullptr, nullptr};
-    if (std::strcmp(module, kWrenRuntimeModule) == 0 &&
+    if (isNativeBridgeModule(module) &&
         (std::strcmp(className, "MidiNative") == 0 ||
          std::strcmp(className, "TeensyClockNative") == 0 ||
          std::strcmp(className, "DebugNative") == 0 ||
          std::strcmp(className, "FileNative") == 0 ||
-         std::strcmp(className, "ConfigNative") == 0))
+         std::strcmp(className, "ConfigNative") == 0 ||
+         std::strcmp(className, "DisplayNative") == 0 ||
+         std::strcmp(className, "ScriptNative") == 0))
     {
         methods.allocate = midiNativeAllocate;
     }
     return methods;
-}
-
-bool initializeEmbeddedExample(WrenVM *vm)
-{
-    WrenInterpretResult result = wrenInterpret(vm, kWrenRuntimeModule, kEmbeddedWrenMidiExample);
-    if (result != WREN_RESULT_SUCCESS)
-    {
-        WREN_BRIDGE_SERIAL_PRINTLN("Wren MIDI example failed to initialize");
-        return false;
-    }
-
-    WREN_BRIDGE_SERIAL_PRINTLN("Wren MIDI example ready");
-    return true;
 }
 
 bool captureDispatchHandles(WrenVM *vm)
@@ -1155,14 +1443,17 @@ void WrenMidiBridge::configure(WrenConfiguration &config)
     config.bindForeignMethodFn = bindMidiForeignMethod;
     config.bindForeignClassFn  = bindMidiForeignClass;
 
-    // Serve `import "json"` from /scripts/builtin/json.wren stored on-device.
-    // filesystem. Called lazily the first time a script imports the module.
+    // Serve builtin imports from /scripts/builtin/<module>.wren stored on-device.
     config.loadModuleFn = [](WrenVM *, const char *name) -> WrenLoadModuleResult {
-        if (std::strcmp(name, "json") != 0 || gFsProvider.read == nullptr)
+        if (gFsProvider.read == nullptr || name == nullptr || std::strcmp(name, kWrenRuntimeModule) == 0)
+            return {nullptr, nullptr, nullptr};
+
+        String path = builtinModulePath(name);
+        if (path.length() == 0)
             return {nullptr, nullptr, nullptr};
 
         String src;
-        if (!gFsProvider.read("/scripts/builtin/json.wren", src))
+        if (!gFsProvider.read(path.c_str(), src))
             return {nullptr, nullptr, nullptr};
 
         char *buf = new char[src.length() + 1];
@@ -1189,21 +1480,19 @@ void WrenMidiBridge::setFsProvider(const WrenFsProvider &provider)
 bool WrenMidiBridge::initialize(WrenVM *vm)
 {
     shutdown(vm);
+    clearRegisteredScripts();
 
-    WrenInterpretResult result = wrenInterpret(vm, kWrenRuntimeModule, kEmbeddedWrenMidiRuntime);
-    if (result != WREN_RESULT_SUCCESS)
+    if (!wrenHasVariable(vm, kWrenRuntimeModule, "Midi"))
     {
-        WREN_BRIDGE_SERIAL_PRINTLN("Wren MIDI runtime failed to initialize");
-        return false;
+        WrenInterpretResult result = wrenInterpret(vm, kWrenRuntimeModule, kEmbeddedWrenMidiRuntime);
+        if (result != WREN_RESULT_SUCCESS)
+        {
+            WREN_BRIDGE_SERIAL_PRINTLN("Wren MIDI runtime failed to initialize");
+            return false;
+        }
     }
 
     if (!captureDispatchHandles(vm))
-    {
-        shutdown(vm);
-        return false;
-    }
-
-    if (!initializeEmbeddedExample(vm))
     {
         shutdown(vm);
         return false;
@@ -1246,4 +1535,63 @@ void WrenMidiBridge::shutdown(WrenVM *vm)
 
     releaseHandle(vm, gMidiClassHandle);
     releaseHandle(vm, gDispatchHandle);
+}
+
+void WrenMidiBridge::clearRegisteredScripts()
+{
+    gManagedScriptCount = 0;
+    gActiveDisplayScriptIndex = -1;
+    gCurrentScriptContext[0] = '\0';
+    for (size_t i = 0; i < kMaxManagedScripts; i++)
+        gManagedScriptNames[i][0] = '\0';
+}
+
+void WrenMidiBridge::registerScriptName(const char *scriptName)
+{
+    if (scriptName == nullptr || scriptName[0] == '\0') return;
+
+    char normalized[kMaxManagedScriptName] = {0};
+    normalizeScriptName(scriptName, normalized, sizeof(normalized));
+    if (normalized[0] == '\0') return;
+
+    for (size_t i = 0; i < gManagedScriptCount; i++)
+    {
+        if (scriptNameEquals(gManagedScriptNames[i], normalized)) return;
+    }
+
+    if (gManagedScriptCount >= kMaxManagedScripts) return;
+    snprintf(gManagedScriptNames[gManagedScriptCount],
+             sizeof(gManagedScriptNames[gManagedScriptCount]),
+             "%s", normalized);
+    gManagedScriptCount++;
+
+    if (gActiveDisplayScriptIndex < 0)
+        gActiveDisplayScriptIndex = 0;
+
+    showScriptMenuStatus();
+}
+
+bool WrenMidiBridge::setActiveScriptName(const char *scriptName)
+{
+    if (scriptName == nullptr) return false;
+    char normalized[kMaxManagedScriptName] = {0};
+    normalizeScriptName(scriptName, normalized, sizeof(normalized));
+    return selectActiveScriptByName(normalized);
+}
+
+void WrenMidiBridge::clearActiveScriptSelection()
+{
+    gActiveDisplayScriptIndex = -1;
+}
+
+void WrenMidiBridge::beginScriptContext(const char *scriptName)
+{
+    char normalized[kMaxManagedScriptName] = {0};
+    normalizeScriptName(scriptName, normalized, sizeof(normalized));
+    snprintf(gCurrentScriptContext, sizeof(gCurrentScriptContext), "%s", normalized);
+}
+
+void WrenMidiBridge::endScriptContext()
+{
+    gCurrentScriptContext[0] = '\0';
 }

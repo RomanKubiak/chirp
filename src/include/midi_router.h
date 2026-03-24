@@ -58,6 +58,9 @@ struct RuntimeDiagCounters
 
 extern RuntimeDiagCounters gDiag;
 
+using MidiPreDispatchHookFn = bool (*)(const MIDIMessage &event);
+void setMidiPreDispatchHook(MidiPreDispatchHookFn hook);
+
 // ── MIDI output ring buffer ────────────────────────────────────────────────────
 static constexpr uint16_t kMidiOutQueueSize = 256;
 static constexpr uint16_t kMidiOutQueueMask = kMidiOutQueueSize - 1;

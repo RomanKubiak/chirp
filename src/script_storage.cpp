@@ -1,6 +1,6 @@
 #include "script_storage.h"
 
-ScriptStorage::ScriptStorage(LittleFS_Program &fs, size_t fsSizeBytes, const char *scriptsDir)
+ScriptStorage::ScriptStorage(ChirpFS &fs, size_t fsSizeBytes, const char *scriptsDir)
     : fs_(fs), fsSizeBytes_(fsSizeBytes), scriptsDir_(scriptsDir), mounted_(false)
 {
 }

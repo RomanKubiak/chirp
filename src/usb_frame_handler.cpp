@@ -247,20 +247,25 @@ static void handleFrame(const ChirpFrame &frame)
         if (!scriptStorage.loadFile(path, source))
             { fsStatus(MSG_FS_RUN_RESP, frame.seq, STATUS_NOT_FOUND); break; }
 
+        String scriptName(path);
+        int slash = scriptName.lastIndexOf('/');
+        if (slash >= 0) scriptName = scriptName.substring(slash + 1);
+        if (scriptName.endsWith(".wren"))
+            scriptName = scriptName.substring(0, scriptName.length() - 5);
+        if (scriptName.length() == 0)
+            scriptName = "script";
+
         // ── Hot-reload sequence ──────────────────────────────────────────────
         // 1. Drain MIDI input that arrived before the reload starts.
         drainMidiInputToBuffer();
 
-        // 2. Call the user's unload hook then wipe all MIDI listeners.
-        wrenInterpret(vm, "chirp_runtime", "Script.callUnload()\nMidi.clearListeners()");
+        // 2. Interpret the new script in an isolated module.
+        bool ok = runWrenUserScriptSource(scriptName.c_str(), source.c_str());
 
-        // 3. Interpret the new script.
-        WrenInterpretResult result = interpretWrenWithCapturedError("chirp_runtime", source.c_str());
-
-        // 4. Replay any MIDI that arrived during interpretation.
+        // 3. Replay any MIDI that arrived during interpretation.
         dispatchMidiFromBuffer();
 
-        if (result != WREN_RESULT_SUCCESS)
+        if (!ok)
         {
             fsBuf[0] = STATUS_ERROR;
             const char *errMsg = (gCapturedWrenError[0] != '\0')
@@ -313,6 +318,8 @@ static void handleFrame(const ChirpFrame &frame)
         *p++ = static_cast<uint8_t>((static_cast<uint32_t>(blockCycles) >> 8)  & 0xFF);
         *p++ = static_cast<uint8_t>((static_cast<uint32_t>(blockCycles) >> 16) & 0xFF);
         *p++ = static_cast<uint8_t>((static_cast<uint32_t>(blockCycles) >> 24) & 0xFF);
+        // backend u8: 0=none, 1=sd, 2=littlefs
+        *p++ = static_cast<uint8_t>(internalFlash.backend());
         usbHandler.send(MSG_FS_SPACE_RESP, frame.seq, fsBuf, static_cast<uint16_t>(p - fsBuf));
         break;
     }
