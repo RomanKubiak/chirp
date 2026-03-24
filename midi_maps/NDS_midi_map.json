@@ -1,0 +1,187 @@
+{
+  "tr808": {
+    "BD": {
+      "full_name": "Bass Drum",
+      "front_cut": "20",
+      "pan": "21",
+      "distortion": "22",
+      "tune": "23",
+      "tone": "24",
+      "decay": "25"
+    },
+    "SD": {
+      "full_name": "Snare Drum",
+      "front_cut": "26",
+      "pan": "27",
+      "distortion": "28",
+      "tune": "29",
+      "tone": "30",
+      "snappy": "31"
+    },
+    "LT": {
+      "full_name": "Low Tom",
+      "front_cut": "32",
+      "pan": "33",
+      "distortion": "34",
+      "tune": "35",
+      "decay": "36"
+    },
+    "MT": {
+      "full_name": "Mid Tom",
+      "front_cut": "37",
+      "pan": "38",
+      "distortion": "39",
+      "tune": "40",
+      "decay": "41"
+    },
+    "HT": {
+      "full_name": "High Tom",
+      "front_cut": "42",
+      "pan": "43",
+      "distortion": "44",
+      "tune": "45",
+      "decay": "46"
+    },
+    "RS": {
+      "full_name": "Rim Shot",
+      "pan": "47",
+      "tune": "48"
+    },
+    "HC": {
+      "full_name": "Hand Clap",
+      "pan": "49",
+      "tune": "50"
+    },
+    "CB": {
+      "full_name": "Cowbell",
+      "pan": "51",
+      "distortion": "52",
+      "tune": "53"
+    },
+    "CH": {
+      "full_name": "Closed Hihat",
+      "pan": "54",
+      "tune": "55",
+      "decay": "56"
+    },
+    "OH": {
+      "full_name": "Open Hihat",
+      "pan": "57",
+      "tune": "58",
+      "decay": "59"
+    },
+    "CC": {
+      "full_name": "Crash Cymbal",
+      "pan": "60",
+      "tune": "61",
+      "decay": "62"
+    },
+    "Lc": {
+      "full_name": "Low Conga",
+      "pan": "63",
+      "distortion": "64",
+      "tune": "65"
+    },
+    "Mc": {
+      "full_name": "Mid Conga",
+      "pan": "66",
+      "distortion": "67",
+      "tune": "68"
+    },
+    "Cc": {
+      "full_name": "High Conga",
+      "pan": "69",
+      "distortion": "70",
+      "tune": "71"
+    },
+    "MA": {
+      "full_name": "Maracas",
+      "pan": "72",
+      "tune": "73"
+    },
+    "CL": {
+      "full_name": "Claves",
+      "pan": "74",
+      "tune": "75"
+    }
+  },
+  "tr909": {
+    "BD": {
+      "full_name": "Bass Drum",
+      "front_cut": "105",
+      "pan": "106",
+      "distortion": "107",
+      "tune": "76",
+      "attack": "77",
+      "decay": "78"
+    },
+    "SD": {
+      "full_name": "Snare Drum",
+      "front_cut": "108",
+      "pan": "109",
+      "distortion": "110",
+      "tune": "79",
+      "tone": "80",
+      "snappy": "81"
+    },
+    "LT": {
+      "full_name": "Low Tom",
+      "front_cut": "82",
+      "pan": "83",
+      "distortion": "84",
+      "tune": "85",
+      "decay": "86"
+    },
+    "MT": {
+      "full_name": "Mid Tom",
+      "front_cut": "87",
+      "pan": "88",
+      "distortion": "89",
+      "tune": "90",
+      "decay": "91"
+    },
+    "HT": {
+      "full_name": "High Tom",
+      "front_cut": "92",
+      "pan": "93",
+      "distortion": "94",
+      "tune": "95",
+      "decay": "96"
+    },
+    "RS": {
+      "full_name": "Rim Shot",
+      "pan": "97",
+      "tune": "98"
+    },
+    "HC": {
+      "full_name": "Hand Clap",
+      "pan": "99",
+      "tune": "100"
+    },
+    "CH": {
+      "full_name": "Closed Hihat",
+      "pan": "111",
+      "distortion": "101",
+      "tune": "102",
+      "decay": "103"
+    },
+    "OH": {
+      "full_name": "Open Hihat",
+      "tune": "104",
+      "pan": "112",
+      "decay": "113"
+    },
+    "CY": {
+      "full_name": "Crash Cymbal",
+      "pan": "114",
+      "tune": "115",
+      "decay": "116"
+    },
+    "RC": {
+      "full_name": "Ride Cymbal",
+      "pan": "117",
+      "tune": "118",
+      "decay": "119"
+    }
+  }
+}
