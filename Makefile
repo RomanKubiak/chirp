@@ -12,15 +12,15 @@ USB = serialmidi
 EXTRA_INCLUDES = -Isrc/wren/include -Isrc/wren/optional -Isrc/wren/vm -Isrc/include
 
 # Set to 1 to enable raw MIDI1 byte logging (shows every byte received).
-DEBUG_MIDI1_RAW = 1
+DEBUG_MIDI1_RAW = 0
 # Set to 1 to enable verbose MIDI read status (shows True/False on each loop).
-VERBOSE_MIDI_STATUS = 1
+VERBOSE_MIDI_STATUS = 0
 # Set to 1 to enable debug logging for MIDI events and Wren print/error logs.
 DEBUG_LOGGING = 1
 # Set to 1 to mirror runtime logs to Serial in addition to control messages.
 DEBUG_RUNTIME_SERIAL = 0
 # Set to 1 to emit periodic diagnostics in loop().
-ENABLE_PERIODIC_DIAG = 1
+ENABLE_PERIODIC_DIAG = 0
 # Periodic diagnostics interval in milliseconds.
 PERIODIC_DIAG_INTERVAL_MS = 1000
 # Set to 1 to emit compact boot diagnostics.
@@ -49,9 +49,9 @@ SD_CARD_CS = 23
 # Max ms to wait for USB serial connection before continuing boot (0 = wait forever).
 SERIAL_WAIT_TIMEOUT_MS = 2000
 # Rotary encoder pins (CLK, DT, SW button) for launcher navigation.
-ENCODER_PIN_CLK = 2
-ENCODER_PIN_DT = 3
-ENCODER_PIN_SW = 4
+ENCODER_PIN_CLK = 5
+ENCODER_PIN_DT = 4
+ENCODER_PIN_SW = 3
 
 EXTRA_CFLAGS = \
 	-DDEBUG_MIDI1_RAW=$(DEBUG_MIDI1_RAW) \

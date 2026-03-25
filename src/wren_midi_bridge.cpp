@@ -445,8 +445,14 @@ class Script {
         if (__fn is Fn) __fn.call()
         __fn = null
     }
+
+    static onFocus(fn) { __focusFn = fn }
+    static callFocus() {
+        if (__focusFn is Fn) __focusFn.call()
+    }
 }
 Script.onUnload(null)
+Script.onFocus(null)
 
 class MidiApi {
     construct new() {

@@ -24,6 +24,7 @@ var knobCachePath = "/userdata/NDS_knob_cc_cache.json"
 var knobCacheLoaded = false
 
 var currentMatrixIndex = null
+var lastDisplayedValue = 0  // tracks last CC value shown, used by onFocus redraw
 
 // Keep incoming name as-is; instrument display names are sourced from JSON full_name.
 var formatName = Fn.new { |name|
@@ -64,6 +65,7 @@ var refreshDisplay = Fn.new { |matrixIndex, value|
     if (parameterEntries.count == 0) return
 
     currentMatrixIndex = matrixIndex
+    lastDisplayedValue = value
 
     var prevEntry = parameterAtMatrix.call(matrixIndex - 1)
     var currEntry = parameterAtMatrix.call(matrixIndex)
@@ -230,11 +232,22 @@ Midi.onHuiMessage(Fn.new { |msg|
     Log.info("[NDS] %(msg)")
 })
 
-Script.onUnload {
+Script.onUnload(Fn.new {
     Midi.clearListeners()
     Display.showStatus("NDS unloaded")
     Log.info("[NDS] unloaded")
-}
+})
+
+// Redraw the current display state whenever focus returns to this script.
+Script.onFocus(Fn.new {
+    if (parameterEntries.count == 0) {
+        Display.showStatus("NDS: no map loaded")
+        return
+    }
+    var idx = currentMatrixIndex
+    if (idx == null) idx = 0
+    refreshDisplay.call(idx, lastDisplayedValue)
+})
 
 Display.showStatus("NDS loading")
 Log.info("[NDS] NDS.wren loaded")

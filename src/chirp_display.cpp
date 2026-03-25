@@ -43,10 +43,12 @@ static struct {
 
 // ── Colors for ST7735 ─────────────────────────────────────────────────────────
 static constexpr uint16_t COLOR_BG       = ST7735_BLACK;
-static constexpr uint16_t COLOR_TEXT     = ST7735_WHITE;
-static constexpr uint16_t COLOR_CURRENT  = ST7735_YELLOW;
-static constexpr uint16_t COLOR_INACTIVE = ST7735_BLUE;
-static constexpr uint16_t COLOR_ACCENT   = ST7735_CYAN;
+static constexpr uint16_t COLOR_TEXT     = ST7735_WHITE;      // general text: full white
+static constexpr uint16_t COLOR_CURRENT  = 0xFFE0;            // selected cursor: bright yellow
+static constexpr uint16_t COLOR_RUNNING  = 0x07FF;            // script running: bright cyan
+static constexpr uint16_t COLOR_INACTIVE = 0xC618;            // not-running neighbour: light grey (75% white)
+static constexpr uint16_t COLOR_ACCENT   = 0x07FF;            // accent/dividers: bright cyan
+static constexpr uint16_t COLOR_ERROR    = 0xF800;            // error: full red
 
 // ── Display dimensions (ST7735 1.8") ──────────────────────────────────────────
 static constexpr uint16_t SCREEN_WIDTH  = 160;
@@ -222,9 +224,9 @@ void update()
             drawMenuLabel(displayState.previewDetail, SCREEN_WIDTH / 2, 62, SCREEN_WIDTH - 12, COLOR_TEXT, 1);
         }
         if (displayState.launcherMenuMode) {
-            uint16_t pc = displayState.launcherPrevError ? 0xF800 : (displayState.launcherPrevActive ? COLOR_ACCENT : COLOR_INACTIVE);
-            uint16_t cc = displayState.launcherCurrError ? 0xF800 : (displayState.launcherCurrActive ? COLOR_CURRENT : COLOR_TEXT);
-            uint16_t nc = displayState.launcherNextError ? 0xF800 : (displayState.launcherNextActive ? COLOR_ACCENT : COLOR_INACTIVE);
+            uint16_t pc = displayState.launcherPrevError ? COLOR_ERROR : (displayState.launcherPrevActive ? COLOR_RUNNING : COLOR_INACTIVE);
+            uint16_t cc = displayState.launcherCurrError ? COLOR_ERROR : (displayState.launcherCurrActive ? COLOR_RUNNING : COLOR_CURRENT);
+            uint16_t nc = displayState.launcherNextError ? COLOR_ERROR : (displayState.launcherNextActive ? COLOR_RUNNING : COLOR_INACTIVE);
             drawMenuLabel(displayState.launcherPrev[0] ? displayState.launcherPrev : "--", 2, 104, 48, pc, 0);
             drawMenuLabel(displayState.launcherCurr[0] ? displayState.launcherCurr : "--", SCREEN_WIDTH / 2, 104, 80, cc, 1);
             drawMenuLabel(displayState.launcherNext[0] ? displayState.launcherNext : "--", SCREEN_WIDTH - 2, 104, 48, nc, 2);
@@ -245,10 +247,9 @@ void update()
         drawMenuLabel(displayState.statsLine4[0] ? displayState.statsLine4 : "-",
                   SCREEN_WIDTH / 2, 84, SCREEN_WIDTH - 8, COLOR_TEXT, 1);
         if (displayState.launcherMenuMode) {
-            // Color logic: error > active > inactive
-            uint16_t pc = displayState.launcherPrevError ? 0xF800 : (displayState.launcherPrevActive ? COLOR_ACCENT : COLOR_INACTIVE);
-            uint16_t cc = displayState.launcherCurrError ? 0xF800 : (displayState.launcherCurrActive ? COLOR_CURRENT : COLOR_TEXT);
-            uint16_t nc = displayState.launcherNextError ? 0xF800 : (displayState.launcherNextActive ? COLOR_ACCENT : COLOR_INACTIVE);
+            uint16_t pc = displayState.launcherPrevError ? COLOR_ERROR : (displayState.launcherPrevActive ? COLOR_RUNNING : COLOR_INACTIVE);
+            uint16_t cc = displayState.launcherCurrError ? COLOR_ERROR : (displayState.launcherCurrActive ? COLOR_RUNNING : COLOR_CURRENT);
+            uint16_t nc = displayState.launcherNextError ? COLOR_ERROR : (displayState.launcherNextActive ? COLOR_RUNNING : COLOR_INACTIVE);
             drawMenuLabel(displayState.launcherPrev[0] ? displayState.launcherPrev : "--", 2, 104, 48, pc, 0);
             drawMenuLabel(displayState.launcherCurr[0] ? displayState.launcherCurr : "--", SCREEN_WIDTH / 2, 104, 80, cc, 1);
             drawMenuLabel(displayState.launcherNext[0] ? displayState.launcherNext : "--", SCREEN_WIDTH - 2, 104, 48, nc, 2);
@@ -306,10 +307,9 @@ void update()
     }
 
     if (displayState.launcherMenuMode) {
-        // Color logic: error > active > inactive
-        uint16_t pc = displayState.launcherPrevError ? 0xF800 : (displayState.launcherPrevActive ? COLOR_ACCENT : COLOR_INACTIVE);
-        uint16_t cc = displayState.launcherCurrError ? 0xF800 : (displayState.launcherCurrActive ? COLOR_CURRENT : COLOR_TEXT);
-        uint16_t nc = displayState.launcherNextError ? 0xF800 : (displayState.launcherNextActive ? COLOR_ACCENT : COLOR_INACTIVE);
+        uint16_t pc = displayState.launcherPrevError ? COLOR_ERROR : (displayState.launcherPrevActive ? COLOR_RUNNING : COLOR_INACTIVE);
+        uint16_t cc = displayState.launcherCurrError ? COLOR_ERROR : (displayState.launcherCurrActive ? COLOR_RUNNING : COLOR_CURRENT);
+        uint16_t nc = displayState.launcherNextError ? COLOR_ERROR : (displayState.launcherNextActive ? COLOR_RUNNING : COLOR_INACTIVE);
         drawMenuLabel(displayState.launcherPrev[0] ? displayState.launcherPrev : "--", 2, statusY, 48, pc, 0);
         drawMenuLabel(displayState.launcherCurr[0] ? displayState.launcherCurr : "--", SCREEN_WIDTH / 2, statusY, 80, cc, 1);
         drawMenuLabel(displayState.launcherNext[0] ? displayState.launcherNext : "--", SCREEN_WIDTH - 2, statusY, 48, nc, 2);
@@ -505,8 +505,9 @@ const char *displayModeName()
 void showSystemStats(const char *line1, const char *line2, const char *line3, const char *line4)
 {
     bool changed = false;
-    if (!displayState.systemStatsMode) {
+    if (!displayState.systemStatsMode || displayState.launcherPreviewMode) {
         displayState.systemStatsMode = true;
+        displayState.launcherPreviewMode = false;  // preview mode and stats mode are mutually exclusive
         changed = true;
     }
 

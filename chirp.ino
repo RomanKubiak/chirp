@@ -8,6 +8,7 @@ clock_t _times(void *buf) { return 0; }
 
 #include <SPI.h>
 #include <ST7735_t3.h>
+#include <Encoder.h>
 #include "wren.hpp"
 #include "MIDI.h"
 #include "midi_types.h"
@@ -43,6 +44,9 @@ MIDI_CREATE_INSTANCE(HardwareSerial, Serial5, MIDI5);
 // ── Display instance (ST7735) ────────────────────────────────────────────────
 ST7735_t3 display(DISPLAY_CS, DISPLAY_DC, DISPLAY_RST);
 
+// ── Encoder instance (rotary encoder with gray-code debouncing) ───────────────
+Encoder launcherEncoder(ENCODER_PIN_CLK, ENCODER_PIN_DT);
+
 // ── Application-wide globals ──────────────────────────────────────────────────
 WrenConfiguration config;
 WrenVM *vm;
@@ -68,12 +72,143 @@ uint32_t gLastLauncherStatsMs = 0;
 uint32_t gLastMidiRateSampleUs = 0;
 uint32_t gLastMidiRateEvents = 0;
 uint32_t gLastMidiEventsPerSec = 0;
-static int16_t gLauncherRunningIndex = -1;
+static bool     gLauncherRunningFlags[kLauncherMaxScripts] = {}; // per-script run state
+static int16_t  gLauncherFocusIndex = 0; // item with display focus (scriptCount = MAIN)
 
 static constexpr uint8_t kEncoderPinClk = ENCODER_PIN_CLK;
 static constexpr uint8_t kEncoderPinDt = ENCODER_PIN_DT;
 static constexpr uint8_t kEncoderPinSw = ENCODER_PIN_SW;
 
+static void logLauncherDebug(const char *message); // forward declaration
+
+static constexpr const char *kLauncherStatePath = "/userdata/launcher_state.json";
+static constexpr size_t kBootAutoStartLimit = 1;
+
+// Write /userdata/launcher_state.json
+// Format: {"scripts":[{"name":"NDS","running":true,"error":false},...]}
+static void launcherSaveState()
+{
+    String json;
+    json.reserve(256);
+    json = "{\"scripts\":[";
+    for (size_t i = 0; i < gLauncherScriptCount; ++i) {
+        if (i > 0) json += ",";
+        json += "{\"name\":\"";
+        json += gLauncherScripts[i];
+        json += "\",\"running\":";
+        // Only the focused script (if running) shall be restored on boot.
+        // All others are saved as not running to prevent boot loops from multi-script auto-start.
+        bool shouldRestore = (static_cast<int16_t>(i) == gLauncherFocusIndex) && gLauncherRunningFlags[i];
+        json += shouldRestore ? "true" : "false";
+        json += ",\"error\":";
+        json += (gLauncherScriptError[i] != 0) ? "true" : "false";
+        json += "}";
+    }
+    json += "]}";
+
+    if (!internalFlash.exists("/userdata")) internalFlash.mkdir("/userdata");
+    if (internalFlash.exists(kLauncherStatePath)) internalFlash.remove(kLauncherStatePath);
+    File f = internalFlash.open(kLauncherStatePath, FILE_WRITE);
+    if (f) {
+        f.write(reinterpret_cast<const uint8_t *>(json.c_str()),
+                static_cast<size_t>(json.length()));
+        f.flush();
+        f.close();
+        logLauncherDebug("[LAUNCHER] state saved");
+    } else {
+        logLauncherDebug("[LAUNCHER] state save failed");
+    }
+}
+
+// Parse launcher_state.json and start scripts that were running.
+// Also restores error flags for scripts that had compile errors.
+static bool launcherLoadAndAutoStart()
+{
+    if (!internalFlash.exists(kLauncherStatePath)) return false;
+    File f = internalFlash.open(kLauncherStatePath, FILE_READ);
+    if (!f) return false;
+    String json;
+    json.reserve(static_cast<size_t>(f.size()) + 1);
+    while (f.available()) json += static_cast<char>(f.read());
+    f.close();
+
+    logLauncherDebug("[LAUNCHER] loading saved state");
+
+    // Minimal hand-rolled parser: find each {"name":"X","running":B,"error":B}.
+    int pos = 0;
+    const int jlen = static_cast<int>(json.length());
+    bool anyLoaded = false;
+    size_t autoStarted = 0;
+
+    while (pos < jlen) {
+        int nameStart = json.indexOf("\"name\":\"", pos);
+        if (nameStart < 0) break;
+        nameStart += 8;
+        int nameEnd = json.indexOf('"', nameStart);
+        if (nameEnd < 0) break;
+        String name = json.substring(nameStart, nameEnd);
+
+        bool isRunning = false;
+        int runKey = json.indexOf("\"running\":", nameEnd);
+        if (runKey >= 0) {
+            int rv = runKey + 10;
+            isRunning = (json.substring(rv, rv + 4) == "true");
+        }
+
+        bool hadError = false;
+        int errKey = json.indexOf("\"error\":", nameEnd);
+        if (errKey >= 0) {
+            int ev = errKey + 8;
+            hadError = (json.substring(ev, ev + 4) == "true");
+        }
+
+        pos = nameEnd + 1;
+
+        for (size_t i = 0; i < gLauncherScriptCount; ++i) {
+            if (gLauncherScripts[i] != name) continue;
+            char buf[96] = {0};
+            if (hadError) {
+                gLauncherScriptError[i] = 1;
+                snprintf(buf, sizeof(buf), "[LAUNCHER] restored error: %s", name.c_str());
+                logLauncherDebug(buf);
+                anyLoaded = true;
+            } else if (isRunning) {
+                if (autoStarted >= kBootAutoStartLimit) {
+                    snprintf(buf, sizeof(buf), "[LAUNCHER] boot auto-start skipped: %s", name.c_str());
+                    logLauncherDebug(buf);
+                    anyLoaded = true;
+                    break;
+                }
+
+                // Transactional boot restore: persist a safe state before attempting
+                // the script start. If this start crashes the MCU, the next boot will
+                // not retry it automatically and the launcher will stay up.
+                for (size_t clearIndex = 0; clearIndex < gLauncherScriptCount; ++clearIndex)
+                    gLauncherRunningFlags[clearIndex] = false;
+                launcherSaveState();
+
+                snprintf(buf, sizeof(buf), "[LAUNCHER] auto-start: %s", name.c_str());
+                logLauncherDebug(buf);
+                if (runStoredWrenScript(name.c_str())) {
+                    gLauncherRunningFlags[i] = true;
+                    gLauncherScriptError[i]  = 0;
+                    launcherSaveState();
+                    logSetup("[BOOT] Launcher: auto-started script");
+                    autoStarted++;
+                } else {
+                    gLauncherRunningFlags[i] = false;
+                    gLauncherScriptError[i] = 1;
+                    launcherSaveState();
+                    snprintf(buf, sizeof(buf), "[LAUNCHER] auto-start failed: %s", name.c_str());
+                    logLauncherDebug(buf);
+                }
+                anyLoaded = true;
+            }
+            break;
+        }
+    }
+    return anyLoaded;
+}
 static void logLauncherDebug(const char *message)
 {
     if (message == nullptr || message[0] == '\0') return;
@@ -87,17 +222,20 @@ static void logLauncherSelection(const char *tag)
     const char *selectedName = (gLauncherSelectedIndex < gLauncherScriptCount)
         ? gLauncherScripts[gLauncherSelectedIndex].c_str()
         : "MAIN";
-    const char *runningName = (gLauncherRunningIndex >= 0 && static_cast<size_t>(gLauncherRunningIndex) < gLauncherScriptCount)
-        ? gLauncherScripts[gLauncherRunningIndex].c_str()
-        : "none";
+    unsigned runCount = 0;
+    for (size_t i = 0; i < gLauncherScriptCount; ++i) if (gLauncherRunningFlags[i]) ++runCount;
+    const char *focusName = (gLauncherFocusIndex >= 0 && static_cast<size_t>(gLauncherFocusIndex) < gLauncherScriptCount)
+        ? gLauncherScripts[gLauncherFocusIndex].c_str()
+        : "MAIN";
     snprintf(buffer, sizeof(buffer),
-             "[LAUNCHER] %s total=%u selected=%u(%s) running=%d(%s)",
+             "[LAUNCHER] %s total=%u selected=%u(%s) running=%u focus=%d(%s)",
              tag ? tag : "state",
              static_cast<unsigned>(total),
              static_cast<unsigned>(gLauncherSelectedIndex),
              selectedName,
-             static_cast<int>(gLauncherRunningIndex),
-             runningName);
+             runCount,
+             static_cast<int>(gLauncherFocusIndex),
+             focusName);
     logLauncherDebug(buffer);
 }
 
@@ -106,10 +244,13 @@ static int32_t launcherApproxFreeRamBytes()
     return -1;
 }
 
-static inline bool isScriptActive(size_t index)
+static inline bool isScriptRunning(size_t index)
 {
-    return gLauncherRunningIndex >= 0 &&
-           static_cast<size_t>(gLauncherRunningIndex) == index;
+    return (index < gLauncherScriptCount) && gLauncherRunningFlags[index];
+}
+static inline bool isScriptFocused(size_t index)
+{
+    return gLauncherFocusIndex >= 0 && static_cast<size_t>(gLauncherFocusIndex) == index;
 }
 
 static String launcherEntryName(size_t index)
@@ -130,9 +271,9 @@ static void renderLauncherMenuStatus()
     const String nextName = launcherEntryName(next);
 
     // MAIN entry (index == scriptCount) has no active or error state.
-    const bool prevActive = (prev < gLauncherScriptCount) && isScriptActive(prev);
-    const bool currActive = (gLauncherSelectedIndex < gLauncherScriptCount) && isScriptActive(gLauncherSelectedIndex);
-    const bool nextActive = (next < gLauncherScriptCount) && isScriptActive(next);
+    const bool prevActive = (prev < gLauncherScriptCount) && isScriptRunning(prev);
+    const bool currActive = (gLauncherSelectedIndex < gLauncherScriptCount) && isScriptRunning(gLauncherSelectedIndex);
+    const bool nextActive = (next < gLauncherScriptCount) && isScriptRunning(next);
     const bool prevError = (prev < gLauncherScriptCount) && gLauncherScriptError[prev];
     const bool currError = (gLauncherSelectedIndex < gLauncherScriptCount) && gLauncherScriptError[gLauncherSelectedIndex];
     const bool nextError = (next < gLauncherScriptCount) && gLauncherScriptError[next];
@@ -154,10 +295,15 @@ static void renderLauncherMenuStatus()
 static void refreshPreviewDisplay()
 {
     const uint32_t now = millis();
-    const bool activeScriptVisible = (gLauncherRunningIndex >= 0);
-    if (activeScriptVisible) {
-        if ((now - gLastLauncherStatsMs) < kSystemStatsRefreshIntervalMs) return;
-        gLastLauncherStatsMs = now;
+
+    // When focus is on a running script it owns the display content area.
+    // Only update the launcher menu bar; the script drives its own content.
+    const size_t focusIdx = (gLauncherFocusIndex >= 0)
+        ? static_cast<size_t>(gLauncherFocusIndex)
+        : gLauncherScriptCount; // treat negative as MAIN
+    if (focusIdx < gLauncherScriptCount && isScriptRunning(focusIdx)) {
+        renderLauncherMenuStatus();
+        return;
     }
     const uint32_t nowUs = micros();
 
@@ -238,20 +384,14 @@ static void refreshPreviewDisplay()
         }
     }
 
-    if (gLauncherRunningIndex >= 0) {
-        // Active script: show system stats with launcher menu
-        ChirpDisplay::showSystemStats(line1, line2, line3, line4);
-    } else if (gLauncherSelectedIndex < gLauncherScriptCount) {
-        // Preview inactive script: show NOT RUNNING or error
-        if (gLauncherScriptError[gLauncherSelectedIndex]) {
+    if (focusIdx < gLauncherScriptCount) {
+        // Focused item is a script that is not running: show preview or error.
+        if (gLauncherScriptError[focusIdx]) {
             const char *err = lastWrenScriptError();
             const char *errScript = lastWrenScriptErrorScriptName();
-            // Show error if it matches this script
-            if (errScript && strcmp(errScript, gLauncherScripts[gLauncherSelectedIndex].c_str()) == 0) {
+            if (errScript && strcmp(errScript, gLauncherScripts[focusIdx].c_str()) == 0) {
                 char errLine[64] = {0};
-                if (err && err[0]) {
-                    snprintf(errLine, sizeof(errLine), "%.40s", err);
-                }
+                if (err && err[0]) snprintf(errLine, sizeof(errLine), "%.40s", err);
                 ChirpDisplay::showLauncherPreview("ERROR", errLine, true);
             } else {
                 ChirpDisplay::showLauncherPreview("ERROR", "COMPILE ERROR", true);
@@ -260,122 +400,168 @@ static void refreshPreviewDisplay()
             ChirpDisplay::showLauncherPreview("NOT RUNNING");
         }
     } else {
-        // MAIN entry: show system stats
+        // MAIN or no-script focus: show system stats.
         ChirpDisplay::showSystemStats(line1, line2, line3, line4);
     }
     renderLauncherMenuStatus();
 }
 
-static void launcherToggleSelectedScript()
+// Unload a running script and GC its heap. With stable module names the VM
+// does not need to be restarted — reloading the same script later will
+// overwrite the module's variable slots in-place.
+static void stopScript(size_t idx)
 {
-    logLauncherSelection("toggle-enter");
-    // MAIN entry: deactivate any running script.
-    if (gLauncherSelectedIndex >= gLauncherScriptCount) {
-        if (gLauncherRunningIndex >= 0) {
-            wrenInterpret(vm, "chirp_runtime", "Script.callUnload()\nMidi.clearListeners()");
-            WrenMidiBridge::clearActiveScriptSelection();
-            gLauncherRunningIndex = -1;
-            logSetup("[BOOT] Launcher: script deactivated");
-            logLauncherDebug("[LAUNCHER] MAIN selected, deactivated running script");
-        }
-        refreshPreviewDisplay();
-        return;
-    }
-
-    // Toggle off: if this script is currently active, deactivate it.
-    if (isScriptActive(gLauncherSelectedIndex)) {
-        wrenInterpret(vm, "chirp_runtime", "Script.callUnload()\nMidi.clearListeners()");
-        WrenMidiBridge::clearActiveScriptSelection();
-        gLauncherRunningIndex = -1;
-        logSetup("[BOOT] Launcher: script deactivated");
-        logLauncherDebug("[LAUNCHER] toggled active script off");
-        refreshPreviewDisplay();
-        return;
-    }
-
-    // Toggle on: activate the selected script.
-    const String scriptName = gLauncherScripts[gLauncherSelectedIndex];
-    
-    // Unload any currently running script before loading the new one.
-    // runWrenUserScriptSource() now relies on the launcher to handle this.
-    if (gLauncherRunningIndex >= 0) {
-        wrenInterpret(vm, "chirp_runtime", "Script.callUnload()\nMidi.clearListeners()");
-        WrenMidiBridge::clearActiveScriptSelection();
-        gLauncherRunningIndex = -1;
-    }
-
-    if (!runStoredWrenScript(scriptName.c_str())) {
-        logSetup("[BOOT] Launcher: script start failed");
-        gLauncherRunningIndex = -1;
-        gLauncherScriptError[gLauncherSelectedIndex] = 1;  // Mark as error
-        char buffer[128] = {0};
-        snprintf(buffer, sizeof(buffer), "[LAUNCHER] script start failed: %s", scriptName.c_str());
-        logLauncherDebug(buffer);
-        refreshPreviewDisplay();
-        return;
-    }
-
-    gLauncherRunningIndex = static_cast<int16_t>(gLauncherSelectedIndex);
-    gLauncherScriptError[gLauncherSelectedIndex] = 0;  // Clear error on successful load
-    char buffer[128] = {0};
-    snprintf(buffer, sizeof(buffer), "[LAUNCHER] script activated: %s", scriptName.c_str());
-    logLauncherDebug(buffer);
-    renderLauncherMenuStatus();
-}
-
-static void launcherDeactivateRunningScript()
-{
-    if (gLauncherRunningIndex < 0) return;
-
-    logLauncherSelection("deactivate-running");
+    if (!vm) return;
     wrenInterpret(vm, "chirp_runtime", "Script.callUnload()\nMidi.clearListeners()");
     WrenMidiBridge::clearActiveScriptSelection();
-    gLauncherRunningIndex = -1;
+    gLauncherRunningFlags[idx] = false;
+    wrenCollectGarbage(vm); // old module-level objects are now unreachable; reclaim them
+    char buf[96] = {0};
+    snprintf(buf, sizeof(buf), "[LAUNCHER] stopped + GC: %s", gLauncherScripts[idx].c_str());
+    logLauncherDebug(buf);
+    logSetup("[BOOT] Launcher: script stopped");
+    launcherSaveState();
 }
 
-static bool launcherHandleNavigation(bool prev, bool next, bool select)
+static void launcherSwitchDisplayContext()
 {
-    if (!prev && !next && !select) return false;
+    // Short click: grab focus/display ownership for the selected item.
+    // Never starts or stops scripts — only changes what is drawn.
+    const size_t idx = gLauncherSelectedIndex;
+    gLauncherFocusIndex = static_cast<int16_t>(idx);
+
+    if (idx < gLauncherScriptCount) {
+        // Give this script display ownership so its Display.* calls pass through.
+        WrenMidiBridge::setActiveScriptName(gLauncherScripts[idx].c_str());
+        char buf[128] = {0};
+        if (isScriptRunning(idx)) {
+            // Script is running: ask it to redraw its last state now.
+            wrenInterpret(vm, "chirp_runtime", "Script.callFocus()");
+            snprintf(buf, sizeof(buf), "[LAUNCHER] focus -> %s (running, redraw triggered)",
+                     gLauncherScripts[idx].c_str());
+        } else {
+            snprintf(buf, sizeof(buf), "[LAUNCHER] focus -> %s (not running)",
+                     gLauncherScripts[idx].c_str());
+        }
+        logLauncherDebug(buf);
+    } else {
+        // MAIN: no script owns the display.
+        WrenMidiBridge::clearActiveScriptSelection();
+        logLauncherDebug("[LAUNCHER] focus -> MAIN");
+    }
+    gLastLauncherStatsMs = 0;
+    logLauncherSelection("single-click focus");
+    refreshPreviewDisplay();
+}
+
+static void launcherToggleScriptRuntime()
+{
+    // Long press: start or stop the selected script.
+    logLauncherSelection("long-press toggle");
+
+    // MAIN entry: no-op.
+    if (gLauncherSelectedIndex >= gLauncherScriptCount) {
+        logLauncherDebug("[LAUNCHER] long-press on MAIN: no script to toggle");
+        return;
+    }
+
+    const size_t idx = gLauncherSelectedIndex;
+    const String scriptName = gLauncherScripts[idx];
+
+    if (isScriptRunning(idx)) {
+        // ── Stop ──
+        stopScript(idx);
+        // Redirect display focus if this script held it.
+        if (isScriptFocused(idx)) {
+            gLauncherFocusIndex = static_cast<int16_t>(gLauncherScriptCount); // → MAIN
+            WrenMidiBridge::clearActiveScriptSelection();
+            logLauncherDebug("[LAUNCHER] focus -> MAIN (stopped script lost focus)");
+        } else if (gLauncherFocusIndex >= 0 &&
+                   static_cast<size_t>(gLauncherFocusIndex) < gLauncherScriptCount &&
+                   isScriptRunning(static_cast<size_t>(gLauncherFocusIndex))) {
+            WrenMidiBridge::setActiveScriptName(
+                gLauncherScripts[static_cast<size_t>(gLauncherFocusIndex)].c_str());
+        }
+        gLastLauncherStatsMs = 0;
+        refreshPreviewDisplay();
+        return;
+    }
+
+    // ── Start: run the script and immediately grab focus ──────────────────────
+    if (!runStoredWrenScript(scriptName.c_str())) {
+        logSetup("[BOOT] Launcher: script start failed");
+        gLauncherScriptError[idx] = 1;
+        char buf[128] = {0};
+        snprintf(buf, sizeof(buf), "[LAUNCHER] start failed: %s", scriptName.c_str());
+        logLauncherDebug(buf);
+        launcherSaveState();
+        gLastLauncherStatsMs = 0;
+        refreshPreviewDisplay();
+        return;
+    }
+
+    gLauncherRunningFlags[idx] = true;
+    gLauncherScriptError[idx]  = 0;
+    // Long-press start also grabs display focus immediately.
+    gLauncherFocusIndex = static_cast<int16_t>(idx);
+    WrenMidiBridge::setActiveScriptName(scriptName.c_str());
+    char buf[128] = {0};
+    snprintf(buf, sizeof(buf), "[LAUNCHER] started + focus: %s", scriptName.c_str());
+    logLauncherDebug(buf);
+    logSetup("[BOOT] Launcher: script started");
+    launcherSaveState();
+    gLastLauncherStatsMs = 0;
+    refreshPreviewDisplay();
+}
+
+static bool launcherHandleNavigation(bool prev, bool next, bool select, bool longPress)
+{
+    if (!prev && !next && !select && !longPress) return false;
 
     const size_t total = gLauncherScriptCount + 1;
     if (total == 0) return true;
 
-    const size_t previousSelection = gLauncherSelectedIndex;
+    // Handle navigation only: update menu selection, no side effects.
+    if (prev || next) {
+        const size_t previousSelection = gLauncherSelectedIndex;
+        if (prev) gLauncherSelectedIndex = (gLauncherSelectedIndex + total - 1) % total;
+        if (next) gLauncherSelectedIndex = (gLauncherSelectedIndex + 1) % total;
 
-    char navBuffer[192] = {0};
-    snprintf(navBuffer, sizeof(navBuffer),
-             "[ENCODER] prev=%u next=%u select=%u before=%u total=%u",
-             prev ? 1U : 0U,
-             next ? 1U : 0U,
-             select ? 1U : 0U,
-             static_cast<unsigned>(previousSelection),
-             static_cast<unsigned>(total));
-    logLauncherDebug(navBuffer);
+        if (gLauncherSelectedIndex == gLauncherScriptCount) {
+            logLauncherDebug("[LAUNCHER] reached MAIN item");
+        }
 
-    if (prev) gLauncherSelectedIndex = (gLauncherSelectedIndex + total - 1) % total;
-    if (next) gLauncherSelectedIndex = (gLauncherSelectedIndex + 1) % total;
+        char navBuffer[192] = {0};
+        snprintf(navBuffer, sizeof(navBuffer),
+                 "[ENCODER] nav: prev=%u next=%u before=%u selected=%u total=%u",
+                 prev ? 1U : 0U,
+                 next ? 1U : 0U,
+                 static_cast<unsigned>(previousSelection),
+                 static_cast<unsigned>(gLauncherSelectedIndex),
+                 static_cast<unsigned>(total));
+        logLauncherDebug(navBuffer);
 
-    if ((prev || next) && gLauncherSelectedIndex == gLauncherScriptCount) {
-        logLauncherDebug("[LAUNCHER] reached MAIN item");
-    }
-
-    if ((prev || next) &&
-        gLauncherRunningIndex >= 0 &&
-        static_cast<size_t>(gLauncherRunningIndex) == previousSelection &&
-        gLauncherSelectedIndex != previousSelection) {
-        launcherDeactivateRunningScript();
-    }
-
-    if (select) {
-        launcherToggleSelectedScript();
-    } else {
+        // Navigation does NOT auto-deactivate running script.
+        // Do NOT call any deactivate function here.
         gLastLauncherStatsMs = 0;
-        logLauncherDebug("[LAUNCHER] forced preview refresh from navigation");
         refreshPreviewDisplay();
+        logLauncherSelection("nav-only");
+        return true;
     }
 
-    logLauncherSelection("nav-exit");
-    return true;
+    // Handle button actions: single click or long press.
+    // NOTE: navSelect (select) and longPress are mutually exclusive - each event sets only one.
+    if (select || longPress) {
+        if (longPress) {
+            launcherToggleScriptRuntime();
+        } else {
+            launcherSwitchDisplayContext();
+        }
+        logLauncherSelection("button-action");
+        return true;
+    }
+
+    return false;
 }
 
 static bool launcherHandleMidiControl(const MIDIMessage &event)
@@ -397,7 +583,7 @@ static bool launcherHandleMidiControl(const MIDIMessage &event)
         else next = true;                         // jog cw
     }
 
-    return launcherHandleNavigation(prev, next, select);
+    return launcherHandleNavigation(prev, next, select, false);
 }
 
 static void initializeLauncherState()
@@ -412,7 +598,8 @@ static void initializeLauncherState()
     }
     
     gLauncherSelectedIndex = 0;
-    gLauncherRunningIndex = -1;
+    for (size_t i = 0; i < kLauncherMaxScripts; ++i) gLauncherRunningFlags[i] = false;
+    gLauncherFocusIndex = static_cast<int16_t>(gLauncherScriptCount); // default focus = MAIN
 
     // On launcher boot, no script should own drawing until one is selected.
     WrenMidiBridge::clearActiveScriptSelection();
@@ -427,6 +614,26 @@ static void initializeLauncherState()
                  static_cast<unsigned>(i), gLauncherScripts[i].c_str());
         logLauncherDebug(buffer);
     }
+
+    // Restore and auto-start scripts from last session.
+    if (launcherLoadAndAutoStart()) {
+        // Give display focus to the first successfully auto-started script.
+        bool focusSet = false;
+        for (size_t i = 0; i < gLauncherScriptCount; ++i) {
+            if (gLauncherRunningFlags[i]) {
+                gLauncherFocusIndex = static_cast<int16_t>(i);
+                WrenMidiBridge::setActiveScriptName(gLauncherScripts[i].c_str());
+                wrenInterpret(vm, "chirp_runtime", "Script.callFocus()");
+                focusSet = true;
+                break;
+            }
+        }
+        if (!focusSet) {
+            // All restored scripts had errors — show MAIN/system stats.
+            gLauncherFocusIndex = static_cast<int16_t>(gLauncherScriptCount);
+        }
+    }
+
     refreshPreviewDisplay();
 }
 
@@ -592,8 +799,7 @@ void setup()
     logDiagnosticSnapshot("post-init");
 
     initializeDisplay();
-    pinMode(kEncoderPinClk, INPUT_PULLUP);
-    pinMode(kEncoderPinDt, INPUT_PULLUP);
+    // Encoder library handles CLK and DT pin setup internally
     pinMode(kEncoderPinSw, INPUT_PULLUP);
     initializeMidiPorts();
     setMidiOutQueueStats(0, 0, kMidiOutQueueSize - 1);
@@ -615,18 +821,18 @@ void loop()
 
     const uint32_t loopStartUs = micros();
     bool hadWork = false;
-    static uint8_t lastEncoderState = 0;
-    static bool encoderStateInitialized = false;
+    static int32_t lastEncoderPosition = 0;
     static bool lastButtonPressed = false;
     static uint32_t buttonDebounceStartMs = 0;
     static constexpr uint32_t kButtonDebounceMs = 25;
-
-    if (!encoderStateInitialized) {
-        const uint8_t clk = digitalReadFast(kEncoderPinClk) ? 1 : 0;
-        const uint8_t dt = digitalReadFast(kEncoderPinDt) ? 1 : 0;
-        lastEncoderState = static_cast<uint8_t>((clk << 1) | dt);
-        encoderStateInitialized = true;
-    }
+    static uint32_t buttonPressStartMs = 0;
+    static constexpr uint32_t kLongPressThresholdMs = 300;
+    
+    // Button action flags (set during loop, used for navigation)
+    bool navPrev = false;
+    bool navNext = false;
+    bool navSelect = false;
+    bool longPress = false;
 
     gDiag.loops = satAddU32(gDiag.loops, 1);
     logPeriodicDiagnostics();
@@ -639,52 +845,35 @@ void loop()
 
     if (drainMidiOutputQueue() > 0) hadWork = true;
 
-    bool navPrev = false;
-    bool navNext = false;
     {
-        const uint8_t clk = digitalReadFast(kEncoderPinClk) ? 1 : 0;
-        const uint8_t dt = digitalReadFast(kEncoderPinDt) ? 1 : 0;
-        const uint8_t state = static_cast<uint8_t>((clk << 1) | dt);
-        const uint8_t transition = static_cast<uint8_t>((lastEncoderState << 2) | state);
+        // Read encoder position using Teensy Encoder library (uses hardware interrupts).
+        // One mechanical detent = 4 internal counts; only register when delta reaches ±4.
+        const int32_t currentPosition = launcherEncoder.read();
+        const int32_t positionDelta = currentPosition - lastEncoderPosition;
 
-        // Only fire on arrival at the detent resting state (both pins HIGH = 0b11).
-        // A mechanical encoder makes 4 gray-code transitions per click; restricting
-        // to the final landing edge gives exactly one event per physical detent.
-        //   CW : ...→ 01 → 11  (transition 0b0111)
-        //   CCW: ...→ 10 → 11  (transition 0b1011)
-        if (state == 0b11) {
-            if (transition == 0b0111) {
-                navNext = true;
-                hadWork = true;
-                char buffer[96] = {0};
-                snprintf(buffer, sizeof(buffer), "[ENCODER] cw transition=%u state=%u",
-                         static_cast<unsigned>(transition),
-                         static_cast<unsigned>(state));
-                logLauncherDebug(buffer);
-            } else if (transition == 0b1011) {
-                navPrev = true;
-                hadWork = true;
-                char buffer[96] = {0};
-                snprintf(buffer, sizeof(buffer), "[ENCODER] ccw transition=%u state=%u",
-                         static_cast<unsigned>(transition),
-                         static_cast<unsigned>(state));
-                logLauncherDebug(buffer);
-            }
-        }
-
-        if (state != lastEncoderState) {
+        if (positionDelta >= 4) {
+            // Encoder rotated clockwise: navigate right.
+            navNext = true;
+            hadWork = true;
             char buffer[96] = {0};
-            snprintf(buffer, sizeof(buffer), "[ENCODER] raw last=%u state=%u transition=%u",
-                     static_cast<unsigned>(lastEncoderState),
-                     static_cast<unsigned>(state),
-                     static_cast<unsigned>(transition));
+            snprintf(buffer, sizeof(buffer), "[ENCODER] cw position=%ld delta=%ld",
+                     static_cast<long>(currentPosition),
+                     static_cast<long>(positionDelta));
             logLauncherDebug(buffer);
+            lastEncoderPosition += 4;  // Consume one detent
+        } else if (positionDelta <= -4) {
+            // Encoder rotated counter-clockwise: navigate left.
+            navPrev = true;
+            hadWork = true;
+            char buffer[96] = {0};
+            snprintf(buffer, sizeof(buffer), "[ENCODER] ccw position=%ld delta=%ld",
+                     static_cast<long>(currentPosition),
+                     static_cast<long>(positionDelta));
+            logLauncherDebug(buffer);
+            lastEncoderPosition -= 4;  // Consume one detent
         }
-
-        lastEncoderState = state;
     }
 
-    bool navSelect = false;
     {
         const bool pressed = (digitalReadFast(kEncoderPinSw) == LOW);
         const uint32_t nowMs = millis();
@@ -693,9 +882,23 @@ void loop()
                 buttonDebounceStartMs = nowMs;
                 lastButtonPressed = pressed;
                 if (pressed) {
-                    navSelect = true;
-                    hadWork = true;
+                    buttonPressStartMs = nowMs;
                     logLauncherDebug("[ENCODER] button pressed");
+                    hadWork = true;
+                } else {
+                    // Button released: determine if it was long press.
+                    const uint32_t pressDurationMs = nowMs - buttonPressStartMs;
+                    if (pressDurationMs >= kLongPressThresholdMs) {
+                        longPress = true;
+                        char buffer[96] = {0};
+                        snprintf(buffer, sizeof(buffer), "[ENCODER] long press (%lums)", 
+                                 static_cast<unsigned long>(pressDurationMs));
+                        logLauncherDebug(buffer);
+                    } else {
+                        navSelect = true;
+                        logLauncherDebug("[ENCODER] short click");
+                    }
+                    hadWork = true;
                 }
             }
         } else {
@@ -703,7 +906,7 @@ void loop()
         }
     }
 
-    launcherHandleNavigation(navPrev, navNext, navSelect);
+    launcherHandleNavigation(navPrev, navNext, navSelect, longPress);
 
     debugMidi1RawBytes();
     debugMidiReadStatus();
@@ -721,9 +924,21 @@ void loop()
 
     if (!hadWork) gDiag.idleLoops = satAddU32(gDiag.idleLoops, 1);
 
-    // Only keep refreshing while an active script owns the display.
-    if (gLauncherRunningIndex >= 0) {
-        refreshPreviewDisplay();
+    // Periodically refresh when focus is not on a running script.
+    // A running script owns the display and drives it via MIDI events.
+    {
+        const bool focusedScriptIsRunning =
+            (gLauncherFocusIndex >= 0 &&
+             static_cast<size_t>(gLauncherFocusIndex) < gLauncherScriptCount &&
+             isScriptRunning(static_cast<size_t>(gLauncherFocusIndex)));
+        if (!focusedScriptIsRunning) {
+            static uint32_t sLastLoopRefreshMs = 0;
+            const uint32_t nowLoopMs = millis();
+            if (nowLoopMs - sLastLoopRefreshMs >= kSystemStatsRefreshIntervalMs) {
+                sLastLoopRefreshMs = nowLoopMs;
+                refreshPreviewDisplay();
+            }
+        }
     }
 
     yield();

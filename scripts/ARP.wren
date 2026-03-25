@@ -235,12 +235,12 @@ Midi.onEvent(Fn.new { |event|
     }
 })
 
-Script.onUnload {
+Script.onUnload(Fn.new {
     resetOutputNote.call()
     Midi.clearListeners()
     Display.showStatus("ARP unloaded")
     Log.info("[ARP] unloaded")
-}
+})
 
 renderDisplay.call("READY")
 Log.info("[ARP] ARP.wren loaded")
