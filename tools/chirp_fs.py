@@ -10,6 +10,7 @@ Commands
 --------
     ping                    Test connection
     reboot                  Request device reboot/reset
+    bootloader              Request device reboot into HalfKay bootloader
     list                    List all scripts as /scripts/*.wren with byte size + filesystem space
     read  <path>            Print script source to stdout
     write <path> [file]     Write a script from <file> (or stdin if omitted)
@@ -32,6 +33,7 @@ Examples
 --------
     chirp_fs.py list
     chirp_fs.py reboot
+    chirp_fs.py bootloader
     chirp_fs.py write /scripts/arp.wren arp.wren
     chirp_fs.py read /scripts/arp.wren
     chirp_fs.py run /scripts/arp.wren
@@ -46,6 +48,7 @@ Examples
 """
 
 import argparse
+import json
 import struct
 import subprocess
 import sys
@@ -73,6 +76,7 @@ MSG_PONG             = 0x7F
 MSG_REBOOT_REQ       = 0x70
 MSG_REBOOT_RESP      = 0x71
 REBOOT_TOKEN         = b"RBT!"
+BOOTLOADER_TOKEN     = b"BTLD"
 MSG_FS_LIST_REQ      = 0x20
 MSG_FS_LIST_RESP     = 0x21
 MSG_FS_READ_REQ      = 0x22
@@ -172,8 +176,6 @@ def _repo_root() -> Path:
 def _target_base_for_dir(local_dir: Path) -> str:
     value = str(local_dir).replace("\\", "/")
     if value.endswith("scripts/builtin"):
-        return "/scripts/builtin"
-    if value.endswith("third_party/wren-json"):
         return "/scripts/builtin"
     if value.endswith("midi_maps"):
         return "/userdata"
@@ -279,6 +281,22 @@ def _build_readme_text() -> str:
         "- /userdata          User data files (maps/config/etc.)\n"
         "- /README.txt        Build metadata on flash root\n"
     )
+
+
+def _build_nds_flat_map(source_path: Path) -> str:
+    raw = json.loads(source_path.read_text(encoding="utf-8"))
+    lines = [
+        "# NDS flat map generated from NDS_midi_map.json",
+        "# kit|instrument|full_name|parameter|cc",
+    ]
+    for kit, instruments in raw.items():
+        for instrument, params in instruments.items():
+            full_name = params.get("full_name", instrument)
+            for parameter, cc in params.items():
+                if parameter == "full_name":
+                    continue
+                lines.append(f"{kit}|{instrument}|{full_name}|{parameter}|{cc}")
+    return "\n".join(lines) + "\n"
 
 # ── Client ────────────────────────────────────────────────────────────────────
 
@@ -414,10 +432,11 @@ class ChirpClient:
             raise RuntimeError(f"Unexpected ping response: 0x{rtype:02X}")
         return rtt
 
-    def reboot(self) -> None:
-        """Request a device reboot. Ack may be missed if reset occurs quickly."""
+    def reboot(self, bootloader: bool = False) -> None:
+        """Request a device reboot or bootloader entry. Ack may be missed if reset occurs quickly."""
         seq = self._next_seq()
-        self._ser.write(_build_frame(MSG_REBOOT_REQ, seq, REBOOT_TOKEN))
+        token = BOOTLOADER_TOKEN if bootloader else REBOOT_TOKEN
+        self._ser.write(_build_frame(MSG_REBOOT_REQ, seq, token))
 
         deadline = time.monotonic() + self._timeout
         while time.monotonic() < deadline:
@@ -606,10 +625,9 @@ class ChirpClient:
         Upload all matching files from local directories to the device.
 
                 Layout mapping:
-                    scripts/               -> /scripts/user/
-                    scripts/builtin/       -> /scripts/builtin/
-                    third_party/wren-json/ -> /scripts/builtin/
-                    midi_maps/             -> /userdata/
+                    scripts/         -> /scripts/user/
+                    scripts/builtin/ -> /scripts/builtin/
+                    midi_maps/       -> /userdata/
 
                 All filenames are uploaded with their full extensions unchanged.
 
@@ -627,6 +645,14 @@ class ChirpClient:
                 continue
             target_base = _target_base_for_dir(p)
 
+            if target_base == "/userdata" and p.name == "midi_maps":
+                nds_json = p / "NDS_midi_map.json"
+                if nds_json.is_file():
+                    generated_files["/userdata/NDS_midi_map.txt"] = (
+                        "<generated NDS flat map>",
+                        _build_nds_flat_map(nds_json),
+                    )
+
             if target_base == "/scripts/builtin" and p.name == "builtin":
                 generated_files["/scripts/builtin/_runtime.wren"] = (
                     "<generated builtin runtime>",
@@ -636,8 +662,6 @@ class ChirpClient:
 
             for f in sorted(p.iterdir()):
                 if not f.is_file() or f.suffix not in extensions:
-                    continue
-                if target_base == "/scripts/builtin" and p.name == "wren-json" and f.name != "json.wren":
                     continue
                 device_path = _normalize_device_path(f"{target_base}/{f.name}")
                 local_files[device_path] = f
@@ -720,6 +744,7 @@ def main() -> None:
 
     sub.add_parser("ping",   help="Test connection")
     sub.add_parser("reboot", help="Request device reboot/reset")
+    sub.add_parser("bootloader", help="Request device reboot into HalfKay bootloader")
     sub.add_parser("list",   help="List managed files on device")
 
     p_read = sub.add_parser("read", help="Print script file to stdout")
@@ -745,8 +770,8 @@ def main() -> None:
 
     p_sync = sub.add_parser("sync",
                             help="Upload all local scripts and maps to device")
-    p_sync.add_argument("dirs", nargs="*", default=["scripts/", "scripts/builtin/", "third_party/wren-json/", "midi_maps/"],
-                        help="Directories to sync (default: scripts/ scripts/builtin/ third_party/wren-json/ midi_maps/)")
+    p_sync.add_argument("dirs", nargs="*", default=["scripts/", "scripts/builtin/", "midi_maps/"],
+                        help="Directories to sync (default: scripts/ scripts/builtin/ midi_maps/)")
     p_sync.add_argument("--ext", nargs="+", default=[".wren", ".json"],
                         metavar="EXT",
                         help="File extensions to include (default: .wren .json)")
@@ -787,6 +812,10 @@ def main() -> None:
             elif args.cmd == "reboot":
                 client.reboot()
                 print("Reboot command sent")
+
+            elif args.cmd == "bootloader":
+                client.reboot(bootloader=True)
+                print("Bootloader command sent")
 
             elif args.cmd == "list":
                 files = client.list_file_stats()

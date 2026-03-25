@@ -444,6 +444,7 @@ class Script {
     static callUnload() {
         if (__fn is Fn) __fn.call()
         __fn = null
+        __focusFn = null  // clear focus callback so old module closures are fully released
     }
 
     static onFocus(fn) { __focusFn = fn }

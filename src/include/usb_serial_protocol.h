@@ -43,6 +43,17 @@ enum ChirpMessageType : uint8_t
     MSG_FS_SPACE_RESP    = 0x2D,
 };
 
+// ── MSG_INTERNAL_CONTROL payload: 1-byte opcode ───────────────────────────────
+// Optional Wren-inject variant: opcode=CTRL_WREN_INJECT followed by UTF-8 source.
+enum ChirpControlOp : uint8_t
+{
+    CTRL_NAV_PREV    = 0x00,  // rotate left  / menu prev
+    CTRL_NAV_NEXT    = 0x01,  // rotate right / menu next
+    CTRL_SELECT      = 0x02,  // short click
+    CTRL_LONG_PRESS  = 0x03,  // long press
+    CTRL_WREN_INJECT = 0x04,  // remaining payload bytes = Wren source to interpret
+};
+
 // ── Status codes ─────────────────────────────────────────────────────────────
 enum ChirpStatus : uint8_t
 {

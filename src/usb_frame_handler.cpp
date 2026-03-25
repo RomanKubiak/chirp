@@ -11,16 +11,23 @@
 #include <Arduino.h>
 #include <cstring>
 
+extern "C" void _reboot_Teensyduino_(void);
+
 // Extern references to globals defined in chirp.ino
 extern USBSerialHandler<usb_serial_class> usbHandler;
 extern ScriptStorage                      scriptStorage;
 extern WrenVM                            *vm;
 extern ChirpFS                            internalFlash;
+extern volatile bool gPendingNavPrev;
+extern volatile bool gPendingNavNext;
+extern volatile bool gPendingNavSelect;
+extern volatile bool gPendingNavLongPress;
 
 // ── File-scope I/O buffers (avoid stack pressure) ────────────────────────────
 static uint8_t    fsBuf[FRAME_MAX_PAYLOAD];
 static ChirpFrame incomingFrame;
 static const char kRebootToken[] = "RBT!";
+static const char kBootloaderToken[] = "BTLD";
 static constexpr uint8_t kWriteChunkMarker = 0xFF;
 static String writeChunkPath;
 static File writeChunkFile;
@@ -57,16 +64,29 @@ static void handleFrame(const ChirpFrame &frame)
 
     case MSG_REBOOT_REQ:
     {
-        if (frame.payloadLen != 4 || memcmp(frame.payload, kRebootToken, 4) != 0)
+        if (frame.payloadLen != 4)
         {
             fsStatus(MSG_REBOOT_RESP, frame.seq, STATUS_INVALID, true);
             logRuntime("[USB] Ignored reboot request (invalid token)");
             break;
         }
+
+        const bool normalReset = memcmp(frame.payload, kRebootToken, 4) == 0;
+        const bool bootloaderReset = memcmp(frame.payload, kBootloaderToken, 4) == 0;
+        if (!normalReset && !bootloaderReset)
+        {
+            fsStatus(MSG_REBOOT_RESP, frame.seq, STATUS_INVALID, true);
+            logRuntime("[USB] Ignored reboot request (unknown mode)");
+            break;
+        }
+
         fsStatus(MSG_REBOOT_RESP, frame.seq, STATUS_OK, true);
-        logRuntime("[USB] Reboot requested");
+        logRuntime(bootloaderReset ? "[USB] Bootloader requested" : "[USB] Reboot requested");
         delay(50);
-        SCB_AIRCR = 0x05FA0004;
+        if (bootloaderReset)
+            _reboot_Teensyduino_();
+        else
+            SCB_AIRCR = 0x05FA0004;
         while (true) {}
         break;
     }
@@ -321,6 +341,40 @@ static void handleFrame(const ChirpFrame &frame)
         // backend u8: 0=none, 1=sd, 2=littlefs
         *p++ = static_cast<uint8_t>(internalFlash.backend());
         usbHandler.send(MSG_FS_SPACE_RESP, frame.seq, fsBuf, static_cast<uint16_t>(p - fsBuf));
+        break;
+    }
+
+    case MSG_INTERNAL_CONTROL:
+    {
+        if (frame.payloadLen < 1) { break; }
+        const uint8_t op = frame.payload[0];
+        switch (op)
+        {
+        case CTRL_NAV_PREV:    gPendingNavPrev      = true; logRuntime("[USB] CTRL nav prev");       break;
+        case CTRL_NAV_NEXT:    gPendingNavNext      = true; logRuntime("[USB] CTRL nav next");       break;
+        case CTRL_SELECT:      gPendingNavSelect    = true; logRuntime("[USB] CTRL select");         break;
+        case CTRL_LONG_PRESS:  gPendingNavLongPress = true; logRuntime("[USB] CTRL long-press");     break;
+        case CTRL_WREN_INJECT:
+        {
+            // Remaining payload bytes are raw Wren source to interpret directly.
+            if (frame.payloadLen < 2) break;
+            uint16_t srcLen = frame.payloadLen - 1;
+            if (srcLen >= FRAME_MAX_PAYLOAD) srcLen = FRAME_MAX_PAYLOAD - 1;
+            char src[FRAME_MAX_PAYLOAD] = {0};
+            memcpy(src, frame.payload + 1, srcLen);
+            src[srcLen] = '\0';
+            logRuntime("[USB] CTRL wren-inject");
+            if (vm) wrenInterpret(vm, "chirp_runtime", src);
+            break;
+        }
+        default:
+        {
+            char info[48] = {0};
+            snprintf(info, sizeof(info), "[USB] Unknown CTRL op=0x%02X", op);
+            logRuntime(info);
+            break;
+        }
+        }
         break;
     }
 

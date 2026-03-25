@@ -36,7 +36,6 @@ From the current build configuration/logs:
 - `tools/chirp_fs.py`: host-side serial tool for managing files on device flash
 - `scripts/*.wren`: user Wren scripts uploaded to `/scripts/user` on the device
 - `midi_maps/*.json`: user data uploaded to `/userdata` on device flash
-- `third_party/wren-json/`: JSON parser module for Wren
 
 ## Build And Flash
 
@@ -92,8 +91,9 @@ Default serial port is `/dev/ttyACM0`. If needed, pass `-p`.
 
 ```bash
 ./tools/chirp_fs.py -p /dev/ttyACM0 list
-./tools/chirp_fs.py -p /dev/ttyACM0 sync --delete scripts/ midi_maps/ third_party/wren-json/
+./tools/chirp_fs.py -p /dev/ttyACM0 sync --delete scripts/ midi_maps/
 ./tools/chirp_fs.py -p /dev/ttyACM0 reboot
+./tools/chirp_fs.py -p /dev/ttyACM0 bootloader
 ./tools/chirp_fs.py -p /dev/ttyACM0 monitor
 ```
 
@@ -101,6 +101,6 @@ Default serial port is `/dev/ttyACM0`. If needed, pass `-p`.
 
 - Device flash layout used by sync:
   - `/scripts/user`: user Wren scripts
-  - `/scripts/builtin`: runtime/modules (e.g. `json.wren`)
+  - `/scripts/builtin`: runtime/modules and generated runtime bundle
   - `/userdata`: JSON maps and cached user data
 - The D-Station script forwards translated CC to MIDI port `1`, MIDI channel `10`.

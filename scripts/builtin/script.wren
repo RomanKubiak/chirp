@@ -20,17 +20,37 @@ class Script {
 
     static canDraw { ScriptNative.canDraw() }
 
-    static onUnload(fn) { __fn = fn }
+    static onUnload(fn) { 
+        if (!__unloadCallbacks) __unloadCallbacks = {}
+        var scriptName = ScriptNative.loadingName()
+        __unloadCallbacks[scriptName] = fn
+    }
+    
     static callUnload() {
-        if (__fn is Fn) __fn.call()
-        __fn = null
+        if (!__unloadCallbacks) __unloadCallbacks = {}
+        var scriptName = ScriptNative.loadingName()
+        var fn = __unloadCallbacks[scriptName]
+        if (fn is Fn) fn.call()
+        __unloadCallbacks[scriptName] = null
+        
+        if (!__focusCallbacks) __focusCallbacks = {}
+        __focusCallbacks[scriptName] = null  // clear focus callback so old module closures are fully released
     }
 
-    static onFocus(fn) { __focusFn = fn }
+    static onFocus(fn) {
+        if (!__focusCallbacks) __focusCallbacks = {}
+        var scriptName = ScriptNative.loadingName()
+        __focusCallbacks[scriptName] = fn
+    }
+    
     static callFocus() {
-        if (__focusFn is Fn) __focusFn.call()
+        if (!__focusCallbacks) __focusCallbacks = {}
+        var scriptName = ScriptNative.loadingName()
+        var fn = __focusCallbacks[scriptName]
+        if (fn is Fn) fn.call()
     }
 }
 
-Script.onUnload(null)
-Script.onFocus(null)
+// Initialize callback maps if not already present
+if (!__unloadCallbacks) __unloadCallbacks = {}
+if (!__focusCallbacks) __focusCallbacks = {}

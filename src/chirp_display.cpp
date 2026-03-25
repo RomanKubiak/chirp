@@ -90,6 +90,26 @@ static void drawText(const char *text, int x, int y, uint16_t color, uint8_t siz
     display.print(text);
 }
 
+static void drawCenteredText(const char *text, uint8_t size)
+{
+    const char *label = (text && text[0]) ? text : "chip";
+
+    display.setFont((const GFXfont *)nullptr);
+    display.setTextSize(size);
+    display.setTextColor(COLOR_TEXT);
+
+    int16_t x1 = 0, y1 = 0;
+    uint16_t w = 0, h = 0;
+    display.getTextBounds(label, 0, 0, &x1, &y1, &w, &h);
+
+    const int16_t x = static_cast<int16_t>((SCREEN_WIDTH - static_cast<int>(w)) / 2) - x1;
+    const int16_t y = static_cast<int16_t>((SCREEN_HEIGHT - static_cast<int>(h)) / 2) - y1;
+
+    display.setCursor(x, y);
+    display.print(label);
+    display.setFont((const GFXfont *)nullptr);
+}
+
 static void drawCurrentLabel(const char *text, int topY, uint16_t color)
 {
     if (text == nullptr || text[0] == '\0') {
@@ -208,6 +228,14 @@ void clear()
 {
     waitForDisplayReady();
     display.fillScreen(COLOR_BG);
+    presentDisplay();
+}
+
+void showCenteredText(const char *text)
+{
+    waitForDisplayReady();
+    display.fillScreen(COLOR_BG);
+    drawCenteredText(text, 4);
     presentDisplay();
 }
 

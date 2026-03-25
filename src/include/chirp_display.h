@@ -24,6 +24,7 @@ void showParameter(const char *paramName, uint8_t cc, uint8_t value);
 void showValue(uint8_t value);
 
 // ── Status display ─────────────────────────────────────────────────────────────
+void showCenteredText(const char *text);
 void showStatus(const char *statusText);
 void showLauncherMenu(const char *prev, const char *curr, const char *next,
                       bool prevActive, bool currActive, bool nextActive,

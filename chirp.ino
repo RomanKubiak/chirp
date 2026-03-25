@@ -75,9 +75,16 @@ uint32_t gLastMidiEventsPerSec = 0;
 static bool     gLauncherRunningFlags[kLauncherMaxScripts] = {}; // per-script run state
 static int16_t  gLauncherFocusIndex = 0; // item with display focus (scriptCount = MAIN)
 
+// Pending navigation injected via USB MSG_INTERNAL_CONTROL (set by usb_frame_handler, consumed by loop).
+volatile bool gPendingNavPrev      = false;
+volatile bool gPendingNavNext      = false;
+volatile bool gPendingNavSelect    = false;
+volatile bool gPendingNavLongPress = false;
+
 static constexpr uint8_t kEncoderPinClk = ENCODER_PIN_CLK;
 static constexpr uint8_t kEncoderPinDt = ENCODER_PIN_DT;
 static constexpr uint8_t kEncoderPinSw = ENCODER_PIN_SW;
+static constexpr bool kBootStaticUiOnly = true;
 
 static void logLauncherDebug(const char *message); // forward declaration
 
@@ -412,10 +419,47 @@ static void refreshPreviewDisplay()
 static void stopScript(size_t idx)
 {
     if (!vm) return;
+    if (idx >= gLauncherScriptCount) return;
+
+#if TRACE_SCRIPT_RELOAD
+    {
+        char buf[128] = {0};
+        snprintf(buf, sizeof(buf), "[TRACE RELOAD] stop:begin script=%s bytes=%lu nextGC=%lu",
+                 gLauncherScripts[idx].c_str(),
+                 static_cast<unsigned long>(vm ? vm->bytesAllocated : 0),
+                 static_cast<unsigned long>(vm ? vm->nextGC : 0));
+        logLauncherDebug(buf);
+    }
+#endif
+
+    // Ensure unload executes against the script currently being stopped.
+    // This keeps Script.callUnload()/Midi.clearListeners() scoped to the
+    // correct owner before module eviction/reload on the next start.
+    WrenMidiBridge::setActiveScriptName(gLauncherScripts[idx].c_str());
     wrenInterpret(vm, "chirp_runtime", "Script.callUnload()\nMidi.clearListeners()");
+#if TRACE_SCRIPT_RELOAD
+    {
+        char buf[128] = {0};
+        snprintf(buf, sizeof(buf), "[TRACE RELOAD] stop:post-unload script=%s bytes=%lu nextGC=%lu",
+                 gLauncherScripts[idx].c_str(),
+                 static_cast<unsigned long>(vm ? vm->bytesAllocated : 0),
+                 static_cast<unsigned long>(vm ? vm->nextGC : 0));
+        logLauncherDebug(buf);
+    }
+#endif
     WrenMidiBridge::clearActiveScriptSelection();
     gLauncherRunningFlags[idx] = false;
     wrenCollectGarbage(vm); // old module-level objects are now unreachable; reclaim them
+#if TRACE_SCRIPT_RELOAD
+    {
+        char buf[128] = {0};
+        snprintf(buf, sizeof(buf), "[TRACE RELOAD] stop:post-gc script=%s bytes=%lu nextGC=%lu",
+                 gLauncherScripts[idx].c_str(),
+                 static_cast<unsigned long>(vm ? vm->bytesAllocated : 0),
+                 static_cast<unsigned long>(vm ? vm->nextGC : 0));
+        logLauncherDebug(buf);
+    }
+#endif
     char buf[96] = {0};
     snprintf(buf, sizeof(buf), "[LAUNCHER] stopped + GC: %s", gLauncherScripts[idx].c_str());
     logLauncherDebug(buf);
@@ -429,14 +473,15 @@ static void launcherSwitchDisplayContext()
     // Never starts or stops scripts — only changes what is drawn.
     const size_t idx = gLauncherSelectedIndex;
     gLauncherFocusIndex = static_cast<int16_t>(idx);
+    bool redrawRunningScript = false;
 
     if (idx < gLauncherScriptCount) {
         // Give this script display ownership so its Display.* calls pass through.
         WrenMidiBridge::setActiveScriptName(gLauncherScripts[idx].c_str());
         char buf[128] = {0};
         if (isScriptRunning(idx)) {
-            // Script is running: ask it to redraw its last state now.
-            wrenInterpret(vm, "chirp_runtime", "Script.callFocus()");
+            // Script is running: ask it to redraw after the launcher refresh.
+            redrawRunningScript = true;
             snprintf(buf, sizeof(buf), "[LAUNCHER] focus -> %s (running, redraw triggered)",
                      gLauncherScripts[idx].c_str());
         } else {
@@ -452,6 +497,10 @@ static void launcherSwitchDisplayContext()
     gLastLauncherStatsMs = 0;
     logLauncherSelection("single-click focus");
     refreshPreviewDisplay();
+
+    if (redrawRunningScript) {
+        wrenInterpret(vm, "chirp_runtime", "Script.callFocus()");
+    }
 }
 
 static void launcherToggleScriptRuntime()
@@ -512,6 +561,7 @@ static void launcherToggleScriptRuntime()
     launcherSaveState();
     gLastLauncherStatsMs = 0;
     refreshPreviewDisplay();
+    wrenInterpret(vm, "chirp_runtime", "Script.callFocus()");
 }
 
 static bool launcherHandleNavigation(bool prev, bool next, bool select, bool longPress)
@@ -619,11 +669,12 @@ static void initializeLauncherState()
     if (launcherLoadAndAutoStart()) {
         // Give display focus to the first successfully auto-started script.
         bool focusSet = false;
+        bool focusNeedsRedraw = false;
         for (size_t i = 0; i < gLauncherScriptCount; ++i) {
             if (gLauncherRunningFlags[i]) {
                 gLauncherFocusIndex = static_cast<int16_t>(i);
                 WrenMidiBridge::setActiveScriptName(gLauncherScripts[i].c_str());
-                wrenInterpret(vm, "chirp_runtime", "Script.callFocus()");
+                focusNeedsRedraw = true;
                 focusSet = true;
                 break;
             }
@@ -631,6 +682,10 @@ static void initializeLauncherState()
         if (!focusSet) {
             // All restored scripts had errors — show MAIN/system stats.
             gLauncherFocusIndex = static_cast<int16_t>(gLauncherScriptCount);
+        }
+
+        if (focusNeedsRedraw) {
+            wrenInterpret(vm, "chirp_runtime", "Script.callFocus()");
         }
     }
 
@@ -670,7 +725,7 @@ static void initializeDisplay()
     // Initialize ChirpDisplay UI framework
     display.setRotation(1);
     ChirpDisplay::init();
-    ChirpDisplay::showStatus("Launcher");
+    ChirpDisplay::showCenteredText("chip");
 
     {
         char displayModeLine[64] = {0};
@@ -695,6 +750,14 @@ void setup()
 
     logSetup("[BOOT] Setup start");
     logCrashReportIfPresent();
+
+    initializeDisplay();
+    if (kBootStaticUiOnly) {
+        logSetup("[BOOT] Static chip screen active; scripts disabled");
+        Serial.flush();
+        delay(40);
+        return;
+    }
 
     const bool storageReady = scriptStorage.begin();
     if (storageReady) {
@@ -798,7 +861,6 @@ void setup()
 
     logDiagnosticSnapshot("post-init");
 
-    initializeDisplay();
     // Encoder library handles CLK and DT pin setup internally
     pinMode(kEncoderPinSw, INPUT_PULLUP);
     initializeMidiPorts();
@@ -815,6 +877,11 @@ void setup()
 // ─────────────────────────────────────────────────────────────────────────────
 void loop()
 {
+    if (kBootStaticUiOnly) {
+        delay(10);
+        return;
+    }
+
     static constexpr uint16_t kMaxMidiEventsPerLoop    = 128;
     static constexpr uint32_t kMidiBudgetUs            = 1200;
     static constexpr uint8_t  kMaxControlFramesPerLoop = 8;
@@ -920,6 +987,27 @@ void loop()
         gDiag.controlUs     = satAddU32(gDiag.controlUs,
                                         static_cast<uint32_t>(micros() - controlStartUs));
         hadWork = true;
+    }
+
+    // ── Consume navigation injected via USB MSG_INTERNAL_CONTROL ─────────────
+    {
+        bool usbPrev = false, usbNext = false, usbSel = false, usbLong = false;
+        if (gPendingNavPrev)      { gPendingNavPrev      = false; usbPrev = true; hadWork = true; }
+        if (gPendingNavNext)      { gPendingNavNext      = false; usbNext = true; hadWork = true; }
+        if (gPendingNavSelect)    { gPendingNavSelect    = false; usbSel  = true; hadWork = true; }
+        if (gPendingNavLongPress) { gPendingNavLongPress = false; usbLong = true; hadWork = true; }
+        if (usbPrev || usbNext || usbSel || usbLong) {
+            char buffer[96] = {0};
+            snprintf(buffer, sizeof(buffer),
+                     "[USB CTRL] prev=%u next=%u select=%u long=%u",
+                     usbPrev ? 1U : 0U,
+                     usbNext ? 1U : 0U,
+                     usbSel ? 1U : 0U,
+                     usbLong ? 1U : 0U);
+            logLauncherDebug(buffer);
+            launcherHandleNavigation(usbPrev, usbNext, usbSel, usbLong);
+            logLauncherSelection("usb-control");
+        }
     }
 
     if (!hadWork) gDiag.idleLoops = satAddU32(gDiag.idleLoops, 1);

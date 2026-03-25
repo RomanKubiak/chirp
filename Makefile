@@ -25,6 +25,8 @@ ENABLE_PERIODIC_DIAG = 0
 PERIODIC_DIAG_INTERVAL_MS = 1000
 # Set to 1 to emit compact boot diagnostics.
 ENABLE_BOOT_DIAG = 1
+# Set to 1 to emit detailed trace logs around script stop/start and Wren reload.
+TRACE_SCRIPT_RELOAD = 1
 
 # Wren heap tuning for Teensy 4.0 RAM constraints.
 WREN_INITIAL_HEAP_BYTES = 262144
@@ -61,6 +63,7 @@ EXTRA_CFLAGS = \
 	-DENABLE_PERIODIC_DIAG=$(ENABLE_PERIODIC_DIAG) \
 	-DPERIODIC_DIAG_INTERVAL_MS=$(PERIODIC_DIAG_INTERVAL_MS) \
 	-DENABLE_BOOT_DIAG=$(ENABLE_BOOT_DIAG) \
+	-DTRACE_SCRIPT_RELOAD=$(TRACE_SCRIPT_RELOAD) \
 	-DENABLE_LIVE_DEBUG=$(ENABLE_LIVE_DEBUG) \
 	-DWREN_INITIAL_HEAP_BYTES=$(WREN_INITIAL_HEAP_BYTES) \
 	-DWREN_MIN_HEAP_BYTES=$(WREN_MIN_HEAP_BYTES) \
@@ -114,7 +117,7 @@ upload:
 	teensy_loader_cli --mcu=$(BOARD) -wvrs $(OUTPUT)/$(TARGET).ino.hex
 
 CHIRP_FS     = python3 tools/chirp_fs.py -p $(PORT)
-SYNC_DIRS    = scripts/ scripts/builtin/ midi_maps/ third_party/wren-json/
+SYNC_DIRS    = scripts/ scripts/builtin/ midi_maps/
 DEVICE_WAIT  = 4
 
 # Upload filesystem assets (scripts/ + midi_maps/) to device over USB serial.
@@ -128,6 +131,11 @@ upload-all: $(BUILD)/$(TARGET).hex
 	@echo "Waiting $(DEVICE_WAIT)s for device to reboot..."
 	@sleep $(DEVICE_WAIT)
 	$(MAKE) upload-fs
+
+# Request device to enter HalfKay bootloader mode (facilitates reflashing in debug loop).
+bootloader:
+	@echo "Requesting bootloader entry on $(PORT)..."
+	$(CHIRP_FS) bootloader
 
 clean:
 	rm -rf $(BUILD)

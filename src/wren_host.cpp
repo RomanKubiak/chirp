@@ -95,6 +95,21 @@ void setBootDisplayScriptName(const String &baseName)
     if (trimmed.length() == 0) return;
     snprintf(gBootDisplayScriptName, sizeof(gBootDisplayScriptName), "%s", trimmed.c_str());
 }
+
+#if TRACE_SCRIPT_RELOAD
+void logReloadTrace(const char *stage, const char *scriptName, const char *moduleName)
+{
+    char buf[196] = {0};
+    snprintf(buf, sizeof(buf),
+             "[TRACE RELOAD] stage=%s script=%s module=%s bytes=%lu nextGC=%lu",
+             stage ? stage : "?",
+             scriptName ? scriptName : "",
+             moduleName ? moduleName : "",
+             static_cast<unsigned long>(vm ? vm->bytesAllocated : 0),
+             static_cast<unsigned long>(vm ? vm->nextGC : 0));
+    logSetup(buf);
+}
+#endif
 }
 
 // ── Error capture ─────────────────────────────────────────────────────────────
@@ -168,13 +183,15 @@ WrenInterpretResult interpretWrenWithCapturedError(const char *module, const cha
 // ── Runtime bootstrap ─────────────────────────────────────────────────────────
 bool initializeWrenRuntime()
 {
+    String runtimeSource = String(kEmbeddedWrenRuntime);
+
     // Always use the embedded runtime: it is always in sync with the firmware.
     // Overwrite the flash copy unconditionally so that after a firmware update
     // the cached file never lags behind and causes "no such method" errors in
     // scripts that rely on newly added Script/Midi API methods.
     if (scriptStorage.isMounted())
     {
-        if (scriptStorage.saveFile(kBuiltinRuntimePath, String(kEmbeddedWrenRuntime)))
+        if (scriptStorage.saveFile(kBuiltinRuntimePath, runtimeSource))
             logRuntime("Wren runtime (embedded) synced to flash");
         else
             logRuntime("Wren runtime flash sync failed (non-fatal)");
@@ -190,6 +207,7 @@ bool initializeWrenRuntime()
         logRuntime("Wren runtime failed to initialize");
         return false;
     }
+
     logRuntime("Wren runtime loaded");
     return true;
 }
@@ -276,10 +294,18 @@ bool runStoredWrenScript(const char *name)
     String source;
     if (!scriptStorage.loadFile(path.c_str(), source)) return false;
 
+#if TRACE_SCRIPT_RELOAD
+    logReloadTrace("stored:loaded-source", name, nullptr);
+#endif
+
     // GC between SD load and Wren interpretation: old module objects may still be
     // reachable in the Wren heap; collecting here lowers peak memory during wrapping
     // and compilation of the new script.
     wrenCollectGarbage(vm);
+
+#if TRACE_SCRIPT_RELOAD
+    logReloadTrace("stored:post-pre-gc", name, nullptr);
+#endif
 
     const bool ok = runWrenUserScriptSource(name, source.c_str());
 
@@ -308,24 +334,49 @@ bool runWrenUserScriptSource(const char *scriptName, const char *source)
 
     char token[32] = {0};
     sanitizeModuleToken(scriptName, token, sizeof(token));
-    // Use a stable module name (no epoch suffix) so re-loading the same script
-    // reuses the existing module table entry.  Wren overwrites the module's
-    // top-level variable slots, making the old objects unreachable so GC can
-    // collect them after the reload instead of accumulating stale modules.
+    // Use a stable module name (no epoch suffix). wrenInterpret() now evicts
+    // the old module from vm->modules before compiling, so the second load
+    // starts with a clean module slot (no "already defined" errors).
     char moduleName[kMaxScriptModuleLen] = {0};
     snprintf(moduleName, sizeof(moduleName), "user_%s", token);
 
+#if TRACE_SCRIPT_RELOAD
+    logReloadTrace("run:enter", scriptName, moduleName);
+#endif
+
     WrenMidiBridge::setActiveScriptName(scriptName);
     WrenMidiBridge::beginScriptContext(scriptName);
+#if TRACE_SCRIPT_RELOAD
+    logReloadTrace("run:context-begin", scriptName, moduleName);
+#endif
     const String wrappedSource = buildIsolatedScriptSource(source);
+#if TRACE_SCRIPT_RELOAD
+    logReloadTrace("run:wrapped-source", scriptName, moduleName);
+#endif
+    // Only reset already-loaded user modules. A first load should compile into
+    // a fresh module slot without touching reload-specific reset logic.
+    if (wrenHasModule(vm, moduleName))
+        wrenResetModule(vm, moduleName);
+#if TRACE_SCRIPT_RELOAD
+    logReloadTrace("run:post-reset", scriptName, moduleName);
+#endif
     WrenInterpretResult result = interpretWrenWithCapturedError(moduleName, wrappedSource.c_str());
+#if TRACE_SCRIPT_RELOAD
+    logReloadTrace("run:post-interpret", scriptName, moduleName);
+#endif
     WrenMidiBridge::endScriptContext();
+#if TRACE_SCRIPT_RELOAD
+    logReloadTrace("run:context-end", scriptName, moduleName);
+#endif
 
     uint32_t afterBytes = vm ? static_cast<uint32_t>(vm->bytesAllocated) : beforeBytes;
     uint32_t deltaBytes = (afterBytes >= beforeBytes) ? (afterBytes - beforeBytes) : 0;
 
     if (result != WREN_RESULT_SUCCESS)
     {
+#if TRACE_SCRIPT_RELOAD
+        logReloadTrace("run:failed", scriptName, moduleName);
+#endif
         trackScriptLoadError(scriptName);
         return false;
     }
@@ -334,6 +385,9 @@ bool runWrenUserScriptSource(const char *scriptName, const char *source)
     // GC after a successful load: old slot values (from any prior run of this
     // module) are now unreachable — reclaim them immediately.
     if (vm) wrenCollectGarbage(vm);
+#if TRACE_SCRIPT_RELOAD
+    logReloadTrace("run:success-post-gc", scriptName, moduleName);
+#endif
     return true;
 }
 

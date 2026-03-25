@@ -242,5 +242,10 @@ Script.onUnload(Fn.new {
     Log.info("[ARP] unloaded")
 })
 
+Script.onFocus(Fn.new {
+    Display.showStatus("ARP active")
+    Log.info("[ARP] focus gained")
+})
+
 renderDisplay.call("READY")
 Log.info("[ARP] ARP.wren loaded")

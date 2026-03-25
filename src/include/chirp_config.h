@@ -34,6 +34,13 @@
 #define ENABLE_LIVE_DEBUG 0
 #endif
 
+// Set to 1 to emit detailed script reload trace logs around stop/start,
+// module reset, GC, and Wren interpretation boundaries. Intended for
+// diagnosing crashes during repeated script load/unload cycles.
+#ifndef TRACE_SCRIPT_RELOAD
+#define TRACE_SCRIPT_RELOAD 0
+#endif
+
 // Wren heap tuning defaults for Teensy 4.0 RAM constraints.
 #ifndef WREN_INITIAL_HEAP_BYTES
 #define WREN_INITIAL_HEAP_BYTES (256 * 1024)

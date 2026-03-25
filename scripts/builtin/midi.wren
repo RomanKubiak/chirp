@@ -265,13 +265,16 @@ class MidiApi {
     }
 
     clearListeners() {
-        _eventListeners = []
-        _noteOnListeners = []
-        _noteOffListeners = []
-        _controlChangeListeners = []
-        _programChangeListeners = []
-        _mcuListeners = []
-        _huiListeners = []
+        // Only clear listeners that belong to the currently active script.
+        // This prevents clearing listeners from other running scripts.
+        var activeScript = ScriptNative.loadingName()
+        _eventListeners = _eventListeners.where { |l| l["owner"] != activeScript }.toList
+        _noteOnListeners = _noteOnListeners.where { |l| l["owner"] != activeScript }.toList
+        _noteOffListeners = _noteOffListeners.where { |l| l["owner"] != activeScript }.toList
+        _controlChangeListeners = _controlChangeListeners.where { |l| l["owner"] != activeScript }.toList
+        _programChangeListeners = _programChangeListeners.where { |l| l["owner"] != activeScript }.toList
+        _mcuListeners = _mcuListeners.where { |l| l["owner"] != activeScript }.toList
+        _huiListeners = _huiListeners.where { |l| l["owner"] != activeScript }.toList
     }
 
     noteOffType { MidiNative.noteOffType() }
