@@ -6,8 +6,8 @@
 #define SD_CARD_CS 23
 #endif
 
-#ifndef DISPLAY_CS
-#define DISPLAY_CS 10
+#ifndef SHARED_SPI_CS
+#define SHARED_SPI_CS 10
 #endif
 
 bool ChirpFS::begin(size_t fsSizeBytes)
@@ -66,8 +66,8 @@ bool ChirpFS::beginSdCard()
 
 void ChirpFS::prepareSharedSpiChipSelects() const
 {
-    pinMode(DISPLAY_CS, OUTPUT);
-    digitalWrite(DISPLAY_CS, HIGH);
+    pinMode(SHARED_SPI_CS, OUTPUT);
+    digitalWrite(SHARED_SPI_CS, HIGH);
 
     pinMode(SD_CARD_CS, OUTPUT);
     digitalWrite(SD_CARD_CS, HIGH);

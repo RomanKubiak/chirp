@@ -96,9 +96,10 @@ def _crc16(data: bytes, init: int = 0xFFFF) -> int:
 
 
 def _ctrl_frame(ctrl: int, seq: int, payload: bytes = b"") -> bytes:
+    full_payload = bytes([ctrl]) + payload
     hdr = bytes([MSG_INTERNAL_CONTROL, seq,
-                 len(payload) & 0xFF, (len(payload) >> 8) & 0xFF])
-    body = hdr + payload
+                 len(full_payload) & 0xFF, (len(full_payload) >> 8) & 0xFF])
+    body = hdr + full_payload
     crc = _crc16(body)
     return bytes([FRAME_SYNC0, FRAME_SYNC1]) + body + bytes([crc & 0xFF, crc >> 8])
 
@@ -131,6 +132,7 @@ class ChirpDevice:
         self._seq = 1
         self._running = False
         self._log_q: "queue.Queue[str]" = queue.Queue()
+        self._pong_q: "queue.Queue[int]" = queue.Queue()
         self._all_lines: list[str] = []
         self._log_lock = threading.Lock()
         self._thread: Optional[threading.Thread] = None
@@ -208,6 +210,8 @@ class ChirpDevice:
                             with self._log_lock:
                                 self._all_lines.append(text)
                             self._log_q.put_nowait(text)
+                        elif hdr[0] == MSG_PONG:
+                            self._pong_q.put_nowait(hdr[1])
                     state = 0
 
     def nav_prev(self) -> None:
@@ -224,11 +228,20 @@ class ChirpDevice:
 
     def ping(self, timeout: float = 3.0) -> bool:
         seq = self._next_seq()
+        while True:
+            try:
+                self._pong_q.get_nowait()
+            except queue.Empty:
+                break
         self._ser.write(_ping_frame(seq))
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
-            raw = self._ser.read(FRAME_OVERHEAD + 8)
-            if MSG_PONG in raw:
+            remaining = deadline - time.monotonic()
+            try:
+                pong_seq = self._pong_q.get(timeout=min(remaining, 0.2))
+            except queue.Empty:
+                continue
+            if pong_seq == seq:
                 return True
         return False
 
@@ -315,22 +328,24 @@ PRODUCTION_SCRIPTS = ["ARP", "NDS_v2"]  # Tested and known-working scripts
 USER_SCRIPTS_ORDERED = ["ARP", "NDS_v2"]  # Alphabetical order on device launcher
 
 def navigate_to(dev: ChirpDevice, script_name: str) -> None:
-    """Navigate launcher to *script_name* via left-wrap then right steps."""
+    """Navigate launcher to *script_name* from a known MAIN anchor."""
     try:
         idx = USER_SCRIPTS_ORDERED.index(script_name)
     except ValueError:
         idx = 0
 
-    # Wrap left past the start to ensure a known position
-    nav_left = len(USER_SCRIPTS_ORDERED) + 2
-    print(f"  nav: {nav_left}x left to wrap to start")
-    for _ in range(nav_left):
+    # Walk left until we observe the MAIN item, then step right from that
+    # anchor. This is deterministic even when launcher selection is persisted.
+    print("  nav: anchoring on MAIN")
+    for _ in range(len(USER_SCRIPTS_ORDERED) + 1):
         dev.nav_prev()
-        time.sleep(0.15)
+        hit = dev.wait_for_pattern(r"reached MAIN item", timeout=0.6)
+        if hit is not None:
+            break
+        time.sleep(0.05)
 
-    # Step right to target index
     print(f"  nav: {idx}x right to reach '{script_name}'")
-    for _ in range(idx):
+    for _ in range(idx + 1):
         dev.nav_next()
         time.sleep(0.15)
 
@@ -367,7 +382,7 @@ ANSI_RESET  = "\033[0m"
 ANSI_BOLD   = "\033[1m"
 
 
-def test_script(dev: ChirpDevice, name: str, cycles: int = 2, show_display: bool = True) -> bool:
+def test_script(dev: ChirpDevice, name: str, cycles: int = 2) -> bool:
     """
     Start/stop *name* for *cycles* iterations.  Returns True if all cycles
     produce expected start and stop log markers.
@@ -384,9 +399,6 @@ def test_script(dev: ChirpDevice, name: str, cycles: int = 2, show_display: bool
 
         # ── Start ─────────────────────────────────────────────────────────────
         print(f"  [START] long-press to start '{name}'")
-        if show_display:
-            dev.send_wren(f'Display.showStatus("{name} C{cycle} START")')
-            time.sleep(0.2)
         dev.flush_queue()   # discard stale navigation/launcher logs
         dev.long_press()
         hit = dev.wait_for_pattern(start_pat, timeout=8.0)
@@ -396,17 +408,10 @@ def test_script(dev: ChirpDevice, name: str, cycles: int = 2, show_display: bool
             return False
         print(f"  {ANSI_GREEN}start marker found{ANSI_RESET}: {hit!r}")
 
-        if show_display:
-            dev.send_wren(f'Display.showStatus("{name} C{cycle} RUN")')
-            time.sleep(0.1)
-
         time.sleep(1.0)   # let script settle
 
         # ── Stop ──────────────────────────────────────────────────────────────
         print(f"  [STOP] long-press to stop '{name}'")
-        if show_display:
-            dev.send_wren(f'Display.showStatus("{name} C{cycle} STOP")')
-            time.sleep(0.2)
         dev.long_press()
         hit = dev.wait_for_pattern(stop_pat, timeout=8.0)
         if hit is None:
@@ -414,10 +419,6 @@ def test_script(dev: ChirpDevice, name: str, cycles: int = 2, show_display: bool
             # Not a hard failure — some scripts log nothing on stop
         else:
             print(f"  {ANSI_GREEN}stop marker found{ANSI_RESET}: {hit!r}")
-
-        if show_display:
-            dev.send_wren(f'Display.showStatus("{name} C{cycle} DONE")')
-            time.sleep(0.1)
 
         time.sleep(0.8)   # let launcher finish cleanup
 
@@ -457,18 +458,6 @@ def main() -> None:
         type=int,
         default=2,
         help="Number of start/stop cycles per script (default: 2)",
-    )
-    parser.add_argument(
-        "--display",
-        action="store_true",
-        default=True,
-        help="Show on-device display status during tests (default: on)",
-    )
-    parser.add_argument(
-        "--no-display",
-        action="store_false",
-        dest="display",
-        help="Disable on-device display status updates",
     )
     args = parser.parse_args()
 
@@ -524,7 +513,7 @@ def main() -> None:
         # ── 5. Run tests ──────────────────────────────────────────────────────
         results: dict[str, bool] = {}
         for name in args.scripts:
-            results[name] = test_script(dev, name, cycles=args.cycles, show_display=args.display)
+            results[name] = test_script(dev, name, cycles=args.cycles)
 
         # Drain remaining logs
         dev.drain_logs(1.0)

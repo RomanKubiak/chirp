@@ -190,7 +190,6 @@ _BUILTIN_RUNTIME_ORDER = [
     "file.wren",
     "config.wren",
     "script.wren",
-    "display.wren",
     "midi.wren",
     "_runtime.wren",
 ]
@@ -634,7 +633,7 @@ class ChirpClient:
         Returns (uploaded, deleted, errors) counts.
         """
         if extensions is None:
-            extensions = [".wren", ".json"]
+            extensions = [".wren", ".json", ".ini"]
 
         local_files: dict = {}  # device_path -> Path
         generated_files: dict = {}  # device_path -> (label, source)
@@ -772,9 +771,9 @@ def main() -> None:
                             help="Upload all local scripts and maps to device")
     p_sync.add_argument("dirs", nargs="*", default=["scripts/", "scripts/builtin/", "midi_maps/"],
                         help="Directories to sync (default: scripts/ scripts/builtin/ midi_maps/)")
-    p_sync.add_argument("--ext", nargs="+", default=[".wren", ".json"],
+    p_sync.add_argument("--ext", nargs="+", default=[".wren", ".json", ".ini"],
                         metavar="EXT",
-                        help="File extensions to include (default: .wren .json)")
+                        help="File extensions to include (default: .wren .json .ini)")
     p_sync.add_argument("--delete", action="store_true",
                         help="Remove device files not present in local directories")
     p_sync.add_argument("--wait", type=float, default=0.0, metavar="SECS",

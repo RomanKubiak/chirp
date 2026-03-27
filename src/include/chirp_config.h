@@ -34,6 +34,12 @@
 #define ENABLE_LIVE_DEBUG 0
 #endif
 
+// Dirty text UI font preset:
+// 0 = built-in GLCD font.
+#ifndef DIRTY_TEXT_FONT_PRESET
+#define DIRTY_TEXT_FONT_PRESET 0
+#endif
+
 // Set to 1 to emit detailed script reload trace logs around stop/start,
 // module reset, GC, and Wren interpretation boundaries. Intended for
 // diagnosing crashes during repeated script load/unload cycles.
@@ -54,41 +60,38 @@
 #define WREN_HEAP_GROWTH_PCT 25
 #endif
 
-// ST7735 1.8" Display pin configuration (from Makefile, used by ST7735_t3 library)
-#ifndef DISPLAY_CS
-#define DISPLAY_CS 10
+// Boot splash display on the shared SPI bus.
+#ifndef ENABLE_BOOT_DISPLAY
+#define ENABLE_BOOT_DISPLAY 1
 #endif
 
-#ifndef DISPLAY_DC
-#define DISPLAY_DC 6
+#ifndef BOOT_DISPLAY_ROTATION
+#define BOOT_DISPLAY_ROTATION 1
 #endif
 
-#ifndef DISPLAY_RST
-#define DISPLAY_RST 9
+// Shared SPI bus pin configuration.
+#ifndef SHARED_SPI_CS
+#define SHARED_SPI_CS 10
 #endif
 
-#ifndef DISPLAY_MOSI
-#define DISPLAY_MOSI 11
+#ifndef SHARED_SPI_DC
+#define SHARED_SPI_DC 6
 #endif
 
-#ifndef DISPLAY_MISO
-#define DISPLAY_MISO 12
+#ifndef SHARED_SPI_RST
+#define SHARED_SPI_RST 9
 #endif
 
-#ifndef DISPLAY_CLK
-#define DISPLAY_CLK 13
+#ifndef SHARED_SPI_MOSI
+#define SHARED_SPI_MOSI 11
 #endif
 
-// Set to 1 to enable ST7735_t3 framebuffer + async DMA updates.
-// Set to 0 to reduce RAM usage and use direct drawing only.
-#ifndef ENABLE_DISPLAY_ASYNC_FRAMEBUFFER
-#define ENABLE_DISPLAY_ASYNC_FRAMEBUFFER 1
+#ifndef SHARED_SPI_MISO
+#define SHARED_SPI_MISO 12
 #endif
 
-// Set to 1 to enable async DMA flush when framebuffer is enabled.
-// Set to 0 to use synchronous flush (more stable on some setups).
-#ifndef ENABLE_DISPLAY_ASYNC_DMA
-#define ENABLE_DISPLAY_ASYNC_DMA 0
+#ifndef SHARED_SPI_CLK
+#define SHARED_SPI_CLK 13
 #endif
 
 // Storage backend: prefer SD on shared SPI (CS pin below), then fallback to LittleFS.

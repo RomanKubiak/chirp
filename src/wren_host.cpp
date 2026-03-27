@@ -21,7 +21,7 @@ constexpr size_t kMaxBootScripts = 32;
 constexpr size_t kMaxScriptNameLen = 48;
 constexpr size_t kMaxScriptModuleLen = 64;
 
-char gBootDisplayScriptName[48] = {0};
+char gBootScriptName[48] = {0};
 char gLastLoadedScriptName[kMaxScriptNameLen] = {0};
 char gLastLoadedScriptModule[kMaxScriptModuleLen] = {0};
 char gLastScriptError[192] = {0};
@@ -29,6 +29,7 @@ char gLastScriptErrorName[kMaxScriptNameLen] = {0};
 uint32_t gLastLoadedScriptMemBytes = 0;
 uint32_t gScriptLoadSuccessCount = 0;
 uint32_t gScriptLoadErrorCount = 0;
+uint32_t gScriptModuleNonce = 0;
 
 void sanitizeModuleToken(const char *src, char *dst, size_t dstSize)
 {
@@ -58,7 +59,7 @@ void sanitizeModuleToken(const char *src, char *dst, size_t dstSize)
 String buildIsolatedScriptSource(const char *source)
 {
     String wrapped;
-    const char *prefix = "import \"chirp_runtime\" for Midi, Display, Script, Log, File, Config, Clock, Debug, Utils, Console\n";
+    const char *prefix = "import \"chirp_runtime\" for Midi, Script, Log, File, Config, Clock, Debug, Utils, Console, DisplayNative\n";
     wrapped.reserve(strlen(prefix) + strlen(source) + 2);
     wrapped += prefix;
     wrapped += source;
@@ -86,14 +87,14 @@ void trackScriptLoadError(const char *scriptName)
     gScriptLoadErrorCount++;
 }
 
-void setBootDisplayScriptName(const String &baseName)
+void setBootScriptName(const String &baseName)
 {
-    if (gBootDisplayScriptName[0] != '\0') return;
+    if (gBootScriptName[0] != '\0') return;
     String trimmed = baseName;
     if (trimmed.endsWith(".wren"))
         trimmed = trimmed.substring(0, trimmed.length() - 5);
     if (trimmed.length() == 0) return;
-    snprintf(gBootDisplayScriptName, sizeof(gBootDisplayScriptName), "%s", trimmed.c_str());
+    snprintf(gBootScriptName, sizeof(gBootScriptName), "%s", trimmed.c_str());
 }
 
 #if TRACE_SCRIPT_RELOAD
@@ -253,9 +254,8 @@ bool prepareStoredWrenScriptsOnBoot()
 {
     if (!vm || !scriptStorage.isMounted()) return false;
 
-    gBootDisplayScriptName[0] = '\0';
+    gBootScriptName[0] = '\0';
     WrenMidiBridge::clearRegisteredScripts();
-    WrenMidiBridge::clearActiveScriptSelection();
 
     String names[kMaxBootScripts];
     const size_t discovered = listStoredWrenScripts(names, kMaxBootScripts);
@@ -278,7 +278,7 @@ bool prepareStoredWrenScriptsOnBoot()
     {
         const String &baseName = names[i];
         if (baseName.length() == 0) continue;
-        setBootDisplayScriptName(baseName + ".wren");
+        setBootScriptName(baseName + ".wren");
         WrenMidiBridge::registerScriptName(baseName.c_str());
     }
 
@@ -326,25 +326,21 @@ bool runWrenUserScriptSource(const char *scriptName, const char *source)
 {
     if (!vm || scriptName == nullptr || scriptName[0] == '\0' || source == nullptr) return false;
 
-    // NOTE: Unload of prior script is handled exclusively by the launcher
-    // (launcherToggleSelectedScript/launcherDeactivateRunningScript).
-    // This avoids double-unload crashes and gives explicit control over cleanup timing.
+    // The launcher owns script stop/start sequencing.
 
     uint32_t beforeBytes = vm ? static_cast<uint32_t>(vm->bytesAllocated) : 0;
 
     char token[32] = {0};
     sanitizeModuleToken(scriptName, token, sizeof(token));
-    // Use a stable module name (no epoch suffix). wrenInterpret() now evicts
-    // the old module from vm->modules before compiling, so the second load
-    // starts with a clean module slot (no "already defined" errors).
     char moduleName[kMaxScriptModuleLen] = {0};
-    snprintf(moduleName, sizeof(moduleName), "user_%s", token);
+    const uint32_t moduleNonce = ++gScriptModuleNonce;
+    snprintf(moduleName, sizeof(moduleName), "user_%s_%lu",
+             token, static_cast<unsigned long>(moduleNonce));
 
 #if TRACE_SCRIPT_RELOAD
     logReloadTrace("run:enter", scriptName, moduleName);
 #endif
 
-    WrenMidiBridge::setActiveScriptName(scriptName);
     WrenMidiBridge::beginScriptContext(scriptName);
 #if TRACE_SCRIPT_RELOAD
     logReloadTrace("run:context-begin", scriptName, moduleName);
@@ -352,13 +348,6 @@ bool runWrenUserScriptSource(const char *scriptName, const char *source)
     const String wrappedSource = buildIsolatedScriptSource(source);
 #if TRACE_SCRIPT_RELOAD
     logReloadTrace("run:wrapped-source", scriptName, moduleName);
-#endif
-    // Only reset already-loaded user modules. A first load should compile into
-    // a fresh module slot without touching reload-specific reset logic.
-    if (wrenHasModule(vm, moduleName))
-        wrenResetModule(vm, moduleName);
-#if TRACE_SCRIPT_RELOAD
-    logReloadTrace("run:post-reset", scriptName, moduleName);
 #endif
     WrenInterpretResult result = interpretWrenWithCapturedError(moduleName, wrappedSource.c_str());
 #if TRACE_SCRIPT_RELOAD
@@ -396,9 +385,9 @@ bool executeStoredWrenScriptsOnBoot()
     return prepareStoredWrenScriptsOnBoot();
 }
 
-const char *bootDisplayScriptName()
+const char *bootScriptName()
 {
-    return gBootDisplayScriptName;
+    return gBootScriptName;
 }
 
 const char *lastLoadedWrenScriptName()

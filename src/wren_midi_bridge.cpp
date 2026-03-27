@@ -1,10 +1,11 @@
 #include "wren_midi_bridge.h"
 
+#include "dirty_text_ui.h"
+
 #include <Arduino.h>
 #include <cctype>
 #include <cstring>
 #include <string>
-#include "chirp_display.h"
 
 #ifndef DEBUG_WREN_BRIDGE_SERIAL
 #define DEBUG_WREN_BRIDGE_SERIAL 0
@@ -39,9 +40,9 @@ bool isNativeBridgeModule(const char *module)
         "debug",
         "file",
         "config",
-        "display",
         "script",
-        "midi"
+        "midi",
+        "display"
     };
 
     if (module == nullptr) return false;
@@ -97,23 +98,22 @@ foreign class ConfigNative {
     foreign static parse(text)
 }
 
-foreign class DisplayNative {
-    foreign static showInstrument(prev, current, next)
-    foreign static showKit(kitName)
-    foreign static showParameter(paramName, cc, value)
-    foreign static showValue(value)
-    foreign static showStatus(statusText)
-}
-
 foreign class ScriptNative {
     foreign static loadingName()
     foreign static enterContext(name)
     foreign static leaveContext()
-    foreign static canDraw()
-    foreign static activeDisplayScript()
-    foreign static nextDisplayScript()
-    foreign static prevDisplayScript()
-    foreign static selectDisplayScript(name)
+}
+
+foreign class DisplayNative {
+    foreign static cols()
+    foreign static rows()
+    foreign static setPalette(foreground, background)
+    foreign static clear()
+    foreign static drawBorder()
+    foreign static setLine(row, col, text, pad, bold, inverted)
+    foreign static setCenteredLine(row, text, bold, inverted)
+    foreign static setCell(row, col, ch, bold, inverted)
+    foreign static render()
 }
 
 class Clock {
@@ -145,40 +145,6 @@ class Log {
 
     static error(message) {
         return DebugNative.error("%(message)")
-    }
-}
-
-// ── Display UI ─────────────────────────────────────────────────────────────────
-// Shows instrument/parameter being edited on the 1.8" display
-//
-//   Display.showInstrument("Kick", "Snare", "Hihat")
-//   Display.showParameter("Pitch", 74, 96)
-//   Display.showStatus("Script loaded")
-
-class Display {
-    static showInstrument(prev, current, next) {
-        if (!Script.canDraw) return
-        DisplayNative.showInstrument(prev, current, next)
-    }
-
-    static showKit(kitName) {
-        if (!Script.canDraw) return
-        DisplayNative.showKit(kitName)
-    }
-    
-    static showParameter(paramName, cc, value) {
-        if (!Script.canDraw) return
-        DisplayNative.showParameter(paramName, cc, value)
-    }
-    
-    static showValue(value) {
-        if (!Script.canDraw) return
-        DisplayNative.showValue(value)
-    }
-    
-    static showStatus(statusText) {
-        if (!Script.canDraw) return
-        DisplayNative.showStatus(statusText)
     }
 }
 
@@ -438,8 +404,6 @@ class Script {
         }
     }
 
-    static canDraw { ScriptNative.canDraw() }
-
     static onUnload(fn) { __fn = fn }
     static callUnload() {
         if (__fn is Fn) __fn.call()
@@ -584,10 +548,6 @@ class MidiApi {
         if (_mcuListeners.count > 0) {
             var m = McuDecoder.decode(event)
             if (m != null) {
-                if (m.name == "cursor_right" && m.state == "press") ScriptNative.nextDisplayScript()
-                if (m.name == "cursor_left" && m.state == "press") ScriptNative.prevDisplayScript()
-                if (m.name == "jog" && m.state == "cw") ScriptNative.nextDisplayScript()
-                if (m.name == "jog" && m.state == "ccw") ScriptNative.prevDisplayScript()
                 emitListeners(_mcuListeners, m)
             }
         }
@@ -621,7 +581,6 @@ constexpr size_t kMaxManagedScripts = 32;
 constexpr size_t kMaxManagedScriptName = 48;
 char   gManagedScriptNames[kMaxManagedScripts][kMaxManagedScriptName] = {};
 size_t gManagedScriptCount = 0;
-int    gActiveDisplayScriptIndex = -1;
 char   gCurrentScriptContext[kMaxManagedScriptName] = {};
 
 void normalizeScriptName(const char *src, char *dst, size_t dstSize)
@@ -642,69 +601,6 @@ bool scriptNameEquals(const char *a, const char *b)
     return std::strcmp(a, b) == 0;
 }
 
-const char *activeDisplayScriptName()
-{
-    if (gActiveDisplayScriptIndex < 0 ||
-        gActiveDisplayScriptIndex >= static_cast<int>(gManagedScriptCount))
-        return nullptr;
-    return gManagedScriptNames[gActiveDisplayScriptIndex];
-}
-
-void showScriptMenuStatus()
-{
-    if (gManagedScriptCount == 0) return;
-
-    const char *name = activeDisplayScriptName();
-    if (name == nullptr || name[0] == '\0') return;
-
-    char status[64] = {0};
-    snprintf(status, sizeof(status), "< %s >", name);
-    ChirpDisplay::showStatus(status);
-}
-
-bool isCurrentScriptAllowedToDraw()
-{
-    if (gManagedScriptCount == 0) return true;
-
-    const char *active = activeDisplayScriptName();
-    if (active == nullptr || active[0] == '\0') return false;
-
-    if (gCurrentScriptContext[0] == '\0') return false;
-    return scriptNameEquals(gCurrentScriptContext, active);
-}
-
-bool selectActiveScriptByName(const char *name)
-{
-    if (name == nullptr || name[0] == '\0') return false;
-    for (size_t i = 0; i < gManagedScriptCount; i++)
-    {
-        if (scriptNameEquals(gManagedScriptNames[i], name))
-        {
-            gActiveDisplayScriptIndex = static_cast<int>(i);
-            showScriptMenuStatus();
-            return true;
-        }
-    }
-    return false;
-}
-
-void selectRelativeScript(int delta)
-{
-    if (gManagedScriptCount == 0 || delta == 0) return;
-    if (gActiveDisplayScriptIndex < 0)
-    {
-        gActiveDisplayScriptIndex = 0;
-        showScriptMenuStatus();
-        return;
-    }
-
-    int next = gActiveDisplayScriptIndex + delta;
-    while (next < 0) next += static_cast<int>(gManagedScriptCount);
-    while (next >= static_cast<int>(gManagedScriptCount)) next -= static_cast<int>(gManagedScriptCount);
-    gActiveDisplayScriptIndex = next;
-    showScriptMenuStatus();
-}
-
 void releaseHandle(WrenVM *vm, WrenHandle *&handle)
 {
     if (handle != nullptr)
@@ -715,6 +611,11 @@ void releaseHandle(WrenVM *vm, WrenHandle *&handle)
 }
 
 void midiNativeAllocate(WrenVM *vm)
+{
+    wrenSetSlotNewForeign(vm, 0, 0, 0);
+}
+
+void displayNativeAllocate(WrenVM *vm)
 {
     wrenSetSlotNewForeign(vm, 0, 0, 0);
 }
@@ -842,6 +743,88 @@ void midiNativeSend(WrenVM *vm)
     wrenSetSlotBool(vm, 0, queued);
 }
 
+static bool displayNativeCanDraw()
+{
+    return gCurrentScriptContext[0] != '\0';
+}
+
+void displayNativeCols(WrenVM *vm)
+{
+    wrenSetSlotDouble(vm, 0, static_cast<double>(DirtyTextUi::kCols));
+}
+
+void displayNativeRows(WrenVM *vm)
+{
+    wrenSetSlotDouble(vm, 0, static_cast<double>(DirtyTextUi::kRows));
+}
+
+void displayNativeSetPalette(WrenVM *vm)
+{
+    if (!displayNativeCanDraw()) { wrenSetSlotBool(vm, 0, false); return; }
+    const uint16_t foreground = static_cast<uint16_t>(wrenGetSlotDouble(vm, 1));
+    const uint16_t background = static_cast<uint16_t>(wrenGetSlotDouble(vm, 2));
+    gDirtyTextUi.setPalette(foreground, background);
+    wrenSetSlotBool(vm, 0, true);
+}
+
+void displayNativeClear(WrenVM *vm)
+{
+    if (!displayNativeCanDraw()) { wrenSetSlotBool(vm, 0, false); return; }
+    gDirtyTextUi.clear();
+    wrenSetSlotBool(vm, 0, true);
+}
+
+void displayNativeDrawBorder(WrenVM *vm)
+{
+    if (!displayNativeCanDraw()) { wrenSetSlotBool(vm, 0, false); return; }
+    gDirtyTextUi.drawBorder();
+    wrenSetSlotBool(vm, 0, true);
+}
+
+void displayNativeSetLine(WrenVM *vm)
+{
+    if (!displayNativeCanDraw() || wrenGetSlotType(vm, 3) != WREN_TYPE_STRING) { wrenSetSlotBool(vm, 0, false); return; }
+    const uint8_t row = static_cast<uint8_t>(wrenGetSlotDouble(vm, 1));
+    const uint8_t col = static_cast<uint8_t>(wrenGetSlotDouble(vm, 2));
+    const char *text = wrenGetSlotString(vm, 3);
+    const bool pad = wrenGetSlotBool(vm, 4);
+    const bool bold = wrenGetSlotBool(vm, 5);
+    const bool inverted = wrenGetSlotBool(vm, 6);
+    gDirtyTextUi.setLine(row, col, text, pad, bold, inverted);
+    wrenSetSlotBool(vm, 0, true);
+}
+
+void displayNativeSetCenteredLine(WrenVM *vm)
+{
+    if (!displayNativeCanDraw() || wrenGetSlotType(vm, 2) != WREN_TYPE_STRING) { wrenSetSlotBool(vm, 0, false); return; }
+    const uint8_t row = static_cast<uint8_t>(wrenGetSlotDouble(vm, 1));
+    const char *text = wrenGetSlotString(vm, 2);
+    const bool bold = wrenGetSlotBool(vm, 3);
+    const bool inverted = wrenGetSlotBool(vm, 4);
+    gDirtyTextUi.setCenteredLine(row, text, bold, inverted);
+    wrenSetSlotBool(vm, 0, true);
+}
+
+void displayNativeSetCell(WrenVM *vm)
+{
+    if (!displayNativeCanDraw() || wrenGetSlotType(vm, 3) != WREN_TYPE_STRING) { wrenSetSlotBool(vm, 0, false); return; }
+    const uint8_t row = static_cast<uint8_t>(wrenGetSlotDouble(vm, 1));
+    const uint8_t col = static_cast<uint8_t>(wrenGetSlotDouble(vm, 2));
+    const char *text = wrenGetSlotString(vm, 3);
+    const char ch = (text != nullptr && text[0] != '\0') ? text[0] : ' ';
+    const bool bold = wrenGetSlotBool(vm, 4);
+    const bool inverted = wrenGetSlotBool(vm, 5);
+    gDirtyTextUi.setCell(row, col, ch, bold, inverted);
+    wrenSetSlotBool(vm, 0, true);
+}
+
+void displayNativeRender(WrenVM *vm)
+{
+    if (!displayNativeCanDraw()) { wrenSetSlotBool(vm, 0, false); return; }
+    gDirtyTextUi.render();
+    wrenSetSlotBool(vm, 0, true);
+}
+
 void logFromWren(WrenVM *vm, const char *level)
 {
     const char *message = "";
@@ -880,43 +863,6 @@ void debugNativeError(WrenVM *vm)
     logFromWren(vm, "ERROR");
 }
 
-// ── DisplayNative handlers ────────────────────────────────────────────────────
-void displayNativeShowInstrument(WrenVM *vm)
-{
-    const char *prev = wrenGetSlotString(vm, 1);
-    const char *current = wrenGetSlotString(vm, 2);
-    const char *next = wrenGetSlotString(vm, 3);
-    
-    ChirpDisplay::showInstrument(prev, current, next);
-}
-
-void displayNativeShowParameter(WrenVM *vm)
-{
-    const char *paramName = wrenGetSlotString(vm, 1);
-    uint8_t cc = static_cast<uint8_t>(wrenGetSlotDouble(vm, 2));
-    uint8_t value = static_cast<uint8_t>(wrenGetSlotDouble(vm, 3));
-    
-    ChirpDisplay::showParameter(paramName, cc, value);
-}
-
-void displayNativeShowKit(WrenVM *vm)
-{
-    const char *kitName = wrenGetSlotString(vm, 1);
-    ChirpDisplay::showKit(kitName);
-}
-
-void displayNativeShowValue(WrenVM *vm)
-{
-    uint8_t value = static_cast<uint8_t>(wrenGetSlotDouble(vm, 1));
-    ChirpDisplay::showValue(value);
-}
-
-void displayNativeShowStatus(WrenVM *vm)
-{
-    const char *statusText = wrenGetSlotString(vm, 1);
-    ChirpDisplay::showStatus(statusText);
-}
-
 void scriptNativeLoadingName(WrenVM *vm)
 {
     wrenSetSlotString(vm, 0, gCurrentScriptContext);
@@ -939,46 +885,6 @@ void scriptNativeLeaveContext(WrenVM *vm)
 {
     (void)vm;
     gCurrentScriptContext[0] = '\0';
-}
-
-void scriptNativeCanDraw(WrenVM *vm)
-{
-    wrenSetSlotBool(vm, 0, isCurrentScriptAllowedToDraw());
-}
-
-void scriptNativeActiveDisplayScript(WrenVM *vm)
-{
-    const char *active = activeDisplayScriptName();
-    if (active == nullptr) {
-        wrenSetSlotNull(vm, 0);
-        return;
-    }
-    wrenSetSlotString(vm, 0, active);
-}
-
-void scriptNativeNextDisplayScript(WrenVM *vm)
-{
-    (void)vm;
-    selectRelativeScript(1);
-}
-
-void scriptNativePrevDisplayScript(WrenVM *vm)
-{
-    (void)vm;
-    selectRelativeScript(-1);
-}
-
-void scriptNativeSelectDisplayScript(WrenVM *vm)
-{
-    if (wrenGetSlotType(vm, 1) != WREN_TYPE_STRING)
-    {
-        wrenSetSlotBool(vm, 0, false);
-        return;
-    }
-
-    char normalized[kMaxManagedScriptName] = {0};
-    normalizeScriptName(wrenGetSlotString(vm, 1), normalized, sizeof(normalized));
-    wrenSetSlotBool(vm, 0, selectActiveScriptByName(normalized));
 }
 
 // ── Path validation ────────────────────────────────────────────────────────
@@ -1349,6 +1255,19 @@ WrenForeignMethodFn bindMidiForeignMethod(WrenVM *vm,
         if (std::strcmp(signature, "send(_,_,_,_,_)") == 0) return midiNativeSend;
     }
 
+    if (std::strcmp(className, "DisplayNative") == 0)
+    {
+        if (std::strcmp(signature, "cols()") == 0) return displayNativeCols;
+        if (std::strcmp(signature, "rows()") == 0) return displayNativeRows;
+        if (std::strcmp(signature, "setPalette(_,_)") == 0) return displayNativeSetPalette;
+        if (std::strcmp(signature, "clear()") == 0) return displayNativeClear;
+        if (std::strcmp(signature, "drawBorder()") == 0) return displayNativeDrawBorder;
+        if (std::strcmp(signature, "setLine(_,_,_,_,_,_)") == 0) return displayNativeSetLine;
+        if (std::strcmp(signature, "setCenteredLine(_,_,_,_)") == 0) return displayNativeSetCenteredLine;
+        if (std::strcmp(signature, "setCell(_,_,_,_,_)") == 0) return displayNativeSetCell;
+        if (std::strcmp(signature, "render()") == 0) return displayNativeRender;
+    }
+
     if (std::strcmp(className, "DebugNative") == 0)
     {
         if (std::strcmp(signature, "debug(_)") == 0) return debugNativeDebug;
@@ -1378,25 +1297,11 @@ WrenForeignMethodFn bindMidiForeignMethod(WrenVM *vm,
         if (std::strcmp(signature, "ticksUs()") == 0) return teensyClockNativeTicksUs;
     }
 
-    if (std::strcmp(className, "DisplayNative") == 0)
-    {
-        if (std::strcmp(signature, "showInstrument(_,_,_)") == 0) return displayNativeShowInstrument;
-        if (std::strcmp(signature, "showKit(_)") == 0) return displayNativeShowKit;
-        if (std::strcmp(signature, "showParameter(_,_,_)") == 0) return displayNativeShowParameter;
-        if (std::strcmp(signature, "showValue(_)") == 0) return displayNativeShowValue;
-        if (std::strcmp(signature, "showStatus(_)") == 0) return displayNativeShowStatus;
-    }
-
     if (std::strcmp(className, "ScriptNative") == 0)
     {
         if (std::strcmp(signature, "loadingName()") == 0) return scriptNativeLoadingName;
         if (std::strcmp(signature, "enterContext(_)") == 0) return scriptNativeEnterContext;
         if (std::strcmp(signature, "leaveContext()") == 0) return scriptNativeLeaveContext;
-        if (std::strcmp(signature, "canDraw()") == 0) return scriptNativeCanDraw;
-        if (std::strcmp(signature, "activeDisplayScript()") == 0) return scriptNativeActiveDisplayScript;
-        if (std::strcmp(signature, "nextDisplayScript()") == 0) return scriptNativeNextDisplayScript;
-        if (std::strcmp(signature, "prevDisplayScript()") == 0) return scriptNativePrevDisplayScript;
-        if (std::strcmp(signature, "selectDisplayScript(_)") == 0) return scriptNativeSelectDisplayScript;
     }
 
     return nullptr;
@@ -1415,10 +1320,13 @@ WrenForeignClassMethods bindMidiForeignClass(WrenVM *vm,
          std::strcmp(className, "DebugNative") == 0 ||
          std::strcmp(className, "FileNative") == 0 ||
          std::strcmp(className, "ConfigNative") == 0 ||
-         std::strcmp(className, "DisplayNative") == 0 ||
          std::strcmp(className, "ScriptNative") == 0))
     {
         methods.allocate = midiNativeAllocate;
+    }
+    if (isNativeBridgeModule(module) && std::strcmp(className, "DisplayNative") == 0)
+    {
+        methods.allocate = displayNativeAllocate;
     }
     return methods;
 }
@@ -1547,7 +1455,6 @@ void WrenMidiBridge::shutdown(WrenVM *vm)
 void WrenMidiBridge::clearRegisteredScripts()
 {
     gManagedScriptCount = 0;
-    gActiveDisplayScriptIndex = -1;
     gCurrentScriptContext[0] = '\0';
     for (size_t i = 0; i < kMaxManagedScripts; i++)
         gManagedScriptNames[i][0] = '\0';
@@ -1571,24 +1478,6 @@ void WrenMidiBridge::registerScriptName(const char *scriptName)
              sizeof(gManagedScriptNames[gManagedScriptCount]),
              "%s", normalized);
     gManagedScriptCount++;
-
-    if (gActiveDisplayScriptIndex < 0)
-        gActiveDisplayScriptIndex = 0;
-
-    showScriptMenuStatus();
-}
-
-bool WrenMidiBridge::setActiveScriptName(const char *scriptName)
-{
-    if (scriptName == nullptr) return false;
-    char normalized[kMaxManagedScriptName] = {0};
-    normalizeScriptName(scriptName, normalized, sizeof(normalized));
-    return selectActiveScriptByName(normalized);
-}
-
-void WrenMidiBridge::clearActiveScriptSelection()
-{
-    gActiveDisplayScriptIndex = -1;
 }
 
 void WrenMidiBridge::beginScriptContext(const char *scriptName)

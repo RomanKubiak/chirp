@@ -33,9 +33,34 @@ From the current build configuration/logs:
 - `chirp/chirp.ino`: Arduino sketch entrypoint
 - `src/`: firmware components (MIDI router, USB protocol handlers, Wren bridge/host)
 - `src/include/`: headers and protocol definitions
+- `src/wren/`: upstream Wren source as a git submodule, pinned to the official Wren repository
 - `tools/chirp_fs.py`: host-side serial tool for managing files on device flash
 - `scripts/*.wren`: user Wren scripts uploaded to `/scripts/user` on the device
 - `midi_maps/*.json`: user data uploaded to `/userdata` on device flash
+
+## Submodules
+
+This repository uses a git submodule for Wren. When cloning the repo for the first time, use:
+
+```bash
+git clone --recursive <repo-url>
+```
+
+If you already cloned it without submodules, initialize them with:
+
+```bash
+git submodule update --init --recursive
+```
+
+To update the Wren submodule to a newer upstream revision:
+
+```bash
+git -C src/wren fetch --tags
+git -C src/wren checkout 0.4.0
+git add src/wren
+```
+
+If you want to track upstream changes on a branch instead of a tag, replace the checkout step with the branch or commit you want, then commit the submodule pointer change in the main repository.
 
 ## Build And Flash
 

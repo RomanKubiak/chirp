@@ -339,10 +339,6 @@ class MidiApi {
         if (_mcuListeners.count > 0) {
             var m = McuDecoder.decode(event)
             if (m != null) {
-                if (m.name == "cursor_right" && m.state == "press") ScriptNative.nextDisplayScript()
-                if (m.name == "cursor_left" && m.state == "press") ScriptNative.prevDisplayScript()
-                if (m.name == "jog" && m.state == "cw") ScriptNative.nextDisplayScript()
-                if (m.name == "jog" && m.state == "ccw") ScriptNative.prevDisplayScript()
                 emitListeners(_mcuListeners, m)
             }
         }

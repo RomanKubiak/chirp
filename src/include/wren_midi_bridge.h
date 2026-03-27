@@ -41,8 +41,6 @@ public:
 
     static void clearRegisteredScripts();
     static void registerScriptName(const char *scriptName);
-    static bool setActiveScriptName(const char *scriptName);
-    static void clearActiveScriptSelection();
     static void beginScriptContext(const char *scriptName);
     static void endScriptContext();
 };

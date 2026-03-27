@@ -542,7 +542,6 @@ static void initCompiler(Compiler* compiler, Parser* parser, Compiler* parent,
   // the middle of initializing the compiler.
   compiler->fn = NULL;
   compiler->constants = NULL;
-  compiler->attributes = NULL;
 
   parser->vm->compiler = compiler;
 
@@ -911,15 +910,13 @@ static void readRawString(Parser* parser)
     char c1 = peekChar(parser);
     char c2 = peekNextChar(parser);
 
-    if (c == '\r') continue;
-
-    if (c == '\n') {
+    if(c == '\n') {
       lastNewline = string.count;
       skipEnd = lastNewline;
       firstNewline = firstNewline == -1 ? string.count : firstNewline;
     }
 
-    if (c == '"' && c1 == '"' && c2 == '"') break;
+    if(c == '"' && c1 == '"' && c2 == '"') break;
     
     bool isWhitespace = c == ' ' || c == '\t';
     skipEnd = c == '\n' || isWhitespace ? skipEnd : -1;
@@ -977,7 +974,6 @@ static void readString(Parser* parser)
   {
     char c = nextChar(parser);
     if (c == '"') break;
-    if (c == '\r') continue;
 
     if (c == '\0')
     {
@@ -1102,7 +1098,7 @@ static void nextToken(Parser* parser)
           skipLineComment(parser);
           break;
         }
-        // Otherwise we treat it as a token
+        // Otherwise we treat it as a token a token
         makeToken(parser, TOKEN_HASH); 
         return;
       }
@@ -1852,14 +1848,8 @@ static void finishParameterList(Compiler* compiler, Signature* signature)
 // Gets the symbol for a method [name] with [length].
 static int methodSymbol(Compiler* compiler, const char* name, int length)
 {
-  int symbol = wrenSymbolTableEnsure(compiler->parser->vm,
+  return wrenSymbolTableEnsure(compiler->parser->vm,
       &compiler->parser->vm->methodNames, name, length);
-
-  if (symbol > MAX_METHODS) {
-    error(compiler, "Method limit of %d reached.", MAX_METHODS);
-  }
-
-  return symbol;
 }
 
 // Appends characters to [name] (and updates [length]) for [numParams] "_"
@@ -3771,7 +3761,7 @@ ObjFn* wrenCompile(WrenVM* vm, ObjModule* module, const char* source,
   // Skip the UTF-8 BOM if there is one.
   if (strncmp(source, "\xEF\xBB\xBF", 3) == 0) source += 3;
   
-  Parser parser = {0};
+  Parser parser;
   parser.vm = vm;
   parser.module = module;
   parser.source = source;

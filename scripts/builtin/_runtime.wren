@@ -2,8 +2,8 @@ import "clock" for Clock
 import "debug" for Log
 import "file" for File
 import "config" for Config
-import "display" for Display
 import "script" for Script
+import "display" for Display
 import "midi" for MidiApi, MidiEvent, McuMessage, HuiMessage, McuDecoder, HuiDecoder
 
 var debugEnabled = true

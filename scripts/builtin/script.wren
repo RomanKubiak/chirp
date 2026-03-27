@@ -2,14 +2,13 @@ foreign class ScriptNative {
     foreign static loadingName()
     foreign static enterContext(name)
     foreign static leaveContext()
-    foreign static canDraw()
-    foreign static activeDisplayScript()
-    foreign static nextDisplayScript()
-    foreign static prevDisplayScript()
-    foreign static selectDisplayScript(name)
 }
 
 class Script {
+    static loadingName() {
+        return ScriptNative.loadingName()
+    }
+
     static wrapListener(callback) {
         var owner = ScriptNative.loadingName()
         return {
@@ -17,8 +16,6 @@ class Script {
             "fn": callback
         }
     }
-
-    static canDraw { ScriptNative.canDraw() }
 
     static onUnload(fn) { 
         if (!__unloadCallbacks) __unloadCallbacks = {}

@@ -1,14 +1,13 @@
 // Generic clocked arpeggiator script for Chirp.
 // Runtime dependencies are provided by /scripts/builtin/_runtime.wren:
 // - midi.wren    -> Midi
-// - display.wren -> Display
 // - script.wren  -> Script
 // - debug.wren   -> Log
 // - External MIDI clock driven (0xF8)
 // - Listens only on MIDI port 2
 // - Arpeggiates held notes from lowest to highest
 // - Configurable rate/gate via CC
-// - Uses display to show ARP configuration and live note state
+// - Logs state changes for debugging during start/stop cycles
 
 var cfg = {
     "in_port": 2,
@@ -35,6 +34,14 @@ var currentNote = -1
 var currentVelocity = 100
 var gateRemaining = 0
 var rateValues = [3, 6, 12, 24]
+
+var drawStatus = Fn.new { |title, subtitle|
+    DisplayNative.clear()
+    DisplayNative.drawBorder()
+    DisplayNative.setCenteredLine(5, title, true, false)
+    DisplayNative.setCenteredLine(8, subtitle, false, false)
+    DisplayNative.render()
+}
 
 var contains = Fn.new { |list, value|
     for (v in list) {
@@ -102,17 +109,6 @@ var resetOutputNote = Fn.new {
     gateRemaining = 0
 }
 
-var renderDisplay = Fn.new { |status|
-    var pool = notePool.call()
-    var noteShown = currentNote >= 0 ? currentNote : 0
-
-    Display.showInstrument("ARP", "LOW-HI", "P2")
-    Display.showKit("R%(rateLabel.call()) G%(cfg["gate_clocks"])")
-    Display.showParameter("NOTE", noteShown, currentVelocity)
-
-    Display.showStatus("%(heldNotesLabel.call()) %(status)")
-}
-
 var sequenceNoteAt = Fn.new { |pool, step|
     var total = pool.count
     if (total <= 0) return null
@@ -123,7 +119,6 @@ var triggerStep = Fn.new {
     var pool = notePool.call()
     if (pool.count == 0) {
         resetOutputNote.call()
-        renderDisplay.call("IDLE")
         return
     }
 
@@ -136,7 +131,6 @@ var triggerStep = Fn.new {
     Midi.noteOn(cfg["out_port"], cfg["out_channel"], note, currentVelocity)
     currentNote = note
     gateRemaining = cfg["gate_clocks"]
-    renderDisplay.call("RUN")
 }
 
 var applyControlChange = Fn.new { |event|
@@ -149,7 +143,6 @@ var applyControlChange = Fn.new { |event|
         cfg["rate_clocks"] = rateValues[idx]
         clockCounter = 0
         stepIndex = 0
-        renderDisplay.call("CFG")
         return
     }
 
@@ -157,7 +150,6 @@ var applyControlChange = Fn.new { |event|
         cfg["gate_clocks"] = 1 + ((value * 24) / 128).floor
         if (cfg["gate_clocks"] < 1) cfg["gate_clocks"] = 1
         if (cfg["gate_clocks"] > 24) cfg["gate_clocks"] = 24
-        renderDisplay.call("CFG")
         return
     }
 
@@ -166,7 +158,6 @@ var applyControlChange = Fn.new { |event|
         clockCounter = 0
         stepIndex = 0
         resetOutputNote.call()
-        renderDisplay.call("CLR")
     }
 }
 
@@ -177,14 +168,12 @@ Midi.onEvent(Fn.new { |event|
         running = true
         clockCounter = 0
         stepIndex = 0
-        renderDisplay.call("START")
         return
     }
 
     if (event.type == 0xFC) { // Stop
         running = false
         resetOutputNote.call()
-        renderDisplay.call("STOP")
         return
     }
 
@@ -219,8 +208,6 @@ Midi.onEvent(Fn.new { |event|
         if (cfg["thru_notes"]) {
             Midi.noteOn(cfg["out_port"], cfg["out_channel"], event.note, event.velocity)
         }
-
-        renderDisplay.call("NOTE")
         return
     }
 
@@ -230,22 +217,18 @@ Midi.onEvent(Fn.new { |event|
         if (cfg["thru_notes"]) {
             Midi.noteOff(cfg["out_port"], cfg["out_channel"], event.note, event.velocity)
         }
-
-        renderDisplay.call("NOTE")
     }
 })
 
 Script.onUnload(Fn.new {
     resetOutputNote.call()
     Midi.clearListeners()
-    Display.showStatus("ARP unloaded")
     Log.info("[ARP] unloaded")
 })
 
 Script.onFocus(Fn.new {
-    Display.showStatus("ARP active")
     Log.info("[ARP] focus gained")
+    drawStatus.call("ARP", "clocked arp active")
 })
 
-renderDisplay.call("READY")
 Log.info("[ARP] ARP.wren loaded")

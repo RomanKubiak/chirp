@@ -11,7 +11,7 @@
         "${workspaceFolder}/src/include",
         "${workspaceFolder}/src/wren",
         "${workspaceFolder}/src/wren/include",
-        "${workspaceFolder}/src/wren/vm",
+        "${workspaceFolder}/src/wren/src/vm",
         "${workspaceFolder}/src/wren/optional",
         "/home/atom/.arduino15/packages/teensy/hardware/avr/1.60.0/cores/teensy4",
         "/home/atom/.arduino15/packages/teensy/hardware/avr/1.60.0/libraries/**"
@@ -23,6 +23,7 @@
           "${workspaceFolder}/src/include",
           "${workspaceFolder}/src/wren",
           "${workspaceFolder}/src/wren/include",
+          "${workspaceFolder}/src/wren/src/vm",
           "/home/atom/.arduino15/packages/teensy/hardware/avr/1.60.0/cores/teensy4",
           "/home/atom/.arduino15/packages/teensy/hardware/avr/1.60.0/libraries"
         ],

@@ -1,36 +1,38 @@
 import "script" for Script
 
 foreign class DisplayNative {
-    foreign static showInstrument(prev, current, next)
-    foreign static showKit(kitName)
-    foreign static showParameter(paramName, cc, value)
-    foreign static showValue(value)
-    foreign static showStatus(statusText)
+    foreign static cols()
+    foreign static rows()
+    foreign static setPalette(foreground, background)
+    foreign static clear()
+    foreign static drawBorder()
+    foreign static setLine(row, col, text, pad, bold, inverted)
+    foreign static setCenteredLine(row, text, bold, inverted)
+    foreign static setCell(row, col, ch, bold, inverted)
+    foreign static render()
 }
 
 class Display {
-    static showInstrument(prev, current, next) {
-        if (!Script.canDraw) return
-        DisplayNative.showInstrument(prev, current, next)
+    static cols() { DisplayNative.cols() }
+    static rows() { DisplayNative.rows() }
+    static setPalette(foreground, background) { DisplayNative.setPalette(foreground, background) }
+    static clear() { DisplayNative.clear() }
+    static drawBorder() { DisplayNative.drawBorder() }
+    static blank() { Display.blank(Script.loadingName()) }
+    static blank(title) {
+        Display.clear()
+        Display.drawBorder()
+        Display.setCenteredLine(Display.rows() / 2, title, true, false)
+        Display.render()
     }
-
-    static showKit(kitName) {
-        if (!Script.canDraw) return
-        DisplayNative.showKit(kitName)
+    static setLine(row, col, text, pad, bold, inverted) {
+        DisplayNative.setLine(row, col, text, pad, bold, inverted)
     }
-
-    static showParameter(paramName, cc, value) {
-        if (!Script.canDraw) return
-        DisplayNative.showParameter(paramName, cc, value)
+    static setCenteredLine(row, text, bold, inverted) {
+        DisplayNative.setCenteredLine(row, text, bold, inverted)
     }
-
-    static showValue(value) {
-        if (!Script.canDraw) return
-        DisplayNative.showValue(value)
+    static setCell(row, col, ch, bold, inverted) {
+        DisplayNative.setCell(row, col, ch, bold, inverted)
     }
-
-    static showStatus(statusText) {
-        if (!Script.canDraw) return
-        DisplayNative.showStatus(statusText)
-    }
+    static render() { DisplayNative.render() }
 }

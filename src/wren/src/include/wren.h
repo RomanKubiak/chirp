@@ -321,24 +321,6 @@ WREN_API void wrenCollectGarbage(WrenVM* vm);
 
 // Runs [source], a string of Wren source code in a new fiber in [vm] in the
 // context of resolved [module].
-// Removes the module named [module] from the VM's module registry, allowing it
-// to be reloaded fresh by the next call to wrenInterpret. Returns true if the
-// module was found and removed, false if it was not present.
-WREN_API bool wrenUnloadModule(WrenVM* vm, const char* module);
-
-// Returns true if the resolved module named [module] already exists in the VM's
-// module registry.
-WREN_API bool wrenHasModule(WrenVM* vm, const char* module);
-
-// Resets a previously-loaded module in-place: wipes its variable/symbol tables
-// and re-imports core built-in variables, leaving the ObjModule in the registry
-// so the GC always has a valid, stable pointer. The next wrenInterpret call for
-// the same module name will compile fresh source into this clean slot.
-// Returns true if the module was found and reset, false if not present.
-WREN_API bool wrenResetModule(WrenVM* vm, const char* module);
-
-// Runs [source], a string of Wren source code in a new fiber in [vm] in the
-// context of resolved [module].
 WREN_API WrenInterpretResult wrenInterpret(WrenVM* vm, const char* module,
                                   const char* source);
 

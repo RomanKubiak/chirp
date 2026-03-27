@@ -2,6 +2,7 @@
 #include "usb_serial_handler.h"
 #include "usb_serial_protocol.h"
 #include "script_storage.h"
+#include "launcher.h"
 #include "wren_host.h"
 #include "midi_router.h"
 #include "runtime_log.h"
@@ -18,10 +19,6 @@ extern USBSerialHandler<usb_serial_class> usbHandler;
 extern ScriptStorage                      scriptStorage;
 extern WrenVM                            *vm;
 extern ChirpFS                            internalFlash;
-extern volatile bool gPendingNavPrev;
-extern volatile bool gPendingNavNext;
-extern volatile bool gPendingNavSelect;
-extern volatile bool gPendingNavLongPress;
 
 // ── File-scope I/O buffers (avoid stack pressure) ────────────────────────────
 static uint8_t    fsBuf[FRAME_MAX_PAYLOAD];
@@ -350,10 +347,10 @@ static void handleFrame(const ChirpFrame &frame)
         const uint8_t op = frame.payload[0];
         switch (op)
         {
-        case CTRL_NAV_PREV:    gPendingNavPrev      = true; logRuntime("[USB] CTRL nav prev");       break;
-        case CTRL_NAV_NEXT:    gPendingNavNext      = true; logRuntime("[USB] CTRL nav next");       break;
-        case CTRL_SELECT:      gPendingNavSelect    = true; logRuntime("[USB] CTRL select");         break;
-        case CTRL_LONG_PRESS:  gPendingNavLongPress = true; logRuntime("[USB] CTRL long-press");     break;
+        case CTRL_NAV_PREV:    queueLauncherNavigation(true,  false, false, false); logRuntime("[USB] CTRL nav prev");       break;
+        case CTRL_NAV_NEXT:    queueLauncherNavigation(false, true,  false, false); logRuntime("[USB] CTRL nav next");       break;
+        case CTRL_SELECT:      queueLauncherNavigation(false, false, true,  false); logRuntime("[USB] CTRL select");         break;
+        case CTRL_LONG_PRESS:  queueLauncherNavigation(false, false, false, true ); logRuntime("[USB] CTRL long-press");     break;
         case CTRL_WREN_INJECT:
         {
             // Remaining payload bytes are raw Wren source to interpret directly.

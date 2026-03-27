@@ -1,8 +1,6 @@
 #include <stdarg.h>
-#include <stdio.h>
 #include <string.h>
 
-#include "chirp_config.h"
 #include "wren.h"
 #include "wren_common.h"
 #include "wren_compiler.h"
@@ -27,50 +25,6 @@
 // may return a non-NULL pointer which must not be dereferenced but nevertheless
 // should be freed. To prevent that, we avoid calling realloc() with a zero
 // size.
-#if TRACE_SCRIPT_RELOAD
-static const bool kTraceReloadVmEnabled = false;
-static const int kTraceReloadOpcodeLimit = 0;
-
-static void traceReloadVm(WrenVM* vm, const char* stage, const char* module,
-                          int varsCount, int namesCount)
-{
-  if (!kTraceReloadVmEnabled) return;
-  if (vm == NULL || vm->config.writeFn == NULL) return;
-  char buf[192] = {0};
-  snprintf(buf, sizeof(buf),
-           "[TRACE VM] stage=%s module=%s bytes=%lu nextGC=%lu vars=%d names=%d",
-           stage ? stage : "?",
-           module ? module : "",
-           (unsigned long)vm->bytesAllocated,
-           (unsigned long)vm->nextGC,
-           varsCount,
-           namesCount);
-  vm->config.writeFn(vm, buf);
-}
-
-static void traceReloadVmOpcode(WrenVM* vm, const char* module,
-                                int offset, int opcode, int count)
-{
-  if (!kTraceReloadVmEnabled) return;
-  if (vm == NULL || vm->config.writeFn == NULL) return;
-  char buf[192] = {0};
-  snprintf(buf, sizeof(buf),
-           "[TRACE VM OPCODE] module=%s offset=%d opcode=0x%02X count=%d bytes=%lu nextGC=%lu",
-           module ? module : "",
-           offset,
-           opcode & 0xFF,
-           count,
-           (unsigned long)vm->bytesAllocated,
-           (unsigned long)vm->nextGC);
-  vm->config.writeFn(vm, buf);
-}
-
-static bool traceReloadIsUserModule(const char* module)
-{
-  return module != NULL && strncmp(module, "user_", 5) == 0;
-}
-#endif
-
 static void* defaultReallocate(void* ptr, size_t newSize, void* _)
 {
   if (newSize == 0)
@@ -501,21 +455,9 @@ static ObjClosure* compileInModule(WrenVM* vm, Value name, const char* source,
 {
   // See if the module has already been loaded.
   ObjModule* module = getModule(vm, name);
-#if TRACE_SCRIPT_RELOAD
-  const char* moduleName = IS_STRING(name) ? AS_CSTRING(name) : "";
-  traceReloadVm(vm, module == NULL ? "compileInModule:module-missing" : "compileInModule:module-found",
-                moduleName,
-                module ? module->variables.count : -1,
-                module ? module->variableNames.count : -1);
-#endif
   if (module == NULL)
   {
     module = wrenNewModule(vm, AS_STRING(name));
-#if TRACE_SCRIPT_RELOAD
-    traceReloadVm(vm, "compileInModule:post-new-module", moduleName,
-                  module ? module->variables.count : -1,
-                  module ? module->variableNames.count : -1);
-#endif
 
     // It's possible for the wrenMapSet below to resize the modules map,
     // and trigger a GC while doing so. When this happens it will collect
@@ -525,11 +467,6 @@ static ObjClosure* compileInModule(WrenVM* vm, Value name, const char* source,
     // Store it in the VM's module registry so we don't load the same module
     // multiple times.
     wrenMapSet(vm, vm->modules, name, OBJ_VAL(module));
-  #if TRACE_SCRIPT_RELOAD
-    traceReloadVm(vm, "compileInModule:post-map-set", moduleName,
-            module ? module->variables.count : -1,
-            module ? module->variableNames.count : -1);
-  #endif
 
     wrenPopRoot(vm);
 
@@ -542,44 +479,19 @@ static ObjClosure* compileInModule(WrenVM* vm, Value name, const char* source,
                          coreModule->variableNames.data[i]->length,
                          coreModule->variables.data[i], NULL);
     }
-#if TRACE_SCRIPT_RELOAD
-    traceReloadVm(vm, "compileInModule:post-core-import", moduleName,
-                  module ? module->variables.count : -1,
-                  module ? module->variableNames.count : -1);
-#endif
   }
 
-#if TRACE_SCRIPT_RELOAD
-  traceReloadVm(vm, "compileInModule:pre-compile", moduleName,
-                module ? module->variables.count : -1,
-                module ? module->variableNames.count : -1);
-#endif
   ObjFn* fn = wrenCompile(vm, module, source, isExpression, printErrors);
   if (fn == NULL)
   {
     // TODO: Should we still store the module even if it didn't compile?
     return NULL;
   }
-#if TRACE_SCRIPT_RELOAD
-  traceReloadVm(vm, "compileInModule:post-compile", moduleName,
-                module ? module->variables.count : -1,
-                module ? module->variableNames.count : -1);
-#endif
 
   // Functions are always wrapped in closures.
   wrenPushRoot(vm, (Obj*)fn);
-#if TRACE_SCRIPT_RELOAD
-  traceReloadVm(vm, "compileInModule:pre-new-closure", moduleName,
-                module ? module->variables.count : -1,
-                module ? module->variableNames.count : -1);
-#endif
   ObjClosure* closure = wrenNewClosure(vm, fn);
   wrenPopRoot(vm); // fn.
-#if TRACE_SCRIPT_RELOAD
-  traceReloadVm(vm, "compileInModule:post-new-closure", moduleName,
-                module ? module->variables.count : -1,
-                module ? module->variableNames.count : -1);
-#endif
 
   return closure;
 }
@@ -827,6 +739,7 @@ static Value importModule(WrenVM* vm, Value name)
   wrenPushRoot(vm, AS_OBJ(name));
 
   WrenLoadModuleResult result = {0};
+  const char* source = NULL;
   
   // Let the host try to provide the module.
   if (vm->config.loadModuleFn != NULL)
@@ -838,11 +751,12 @@ static Value importModule(WrenVM* vm, Value name)
   if (result.source == NULL)
   {
     result.onComplete = NULL;
+    ObjString* nameString = AS_STRING(name);
 #if WREN_OPT_META
-    if (strcmp(AS_CSTRING(name), "meta") == 0) result.source = wrenMetaSource();
+    if (strcmp(nameString->value, "meta") == 0) result.source = wrenMetaSource();
 #endif
 #if WREN_OPT_RANDOM
-    if (strcmp(AS_CSTRING(name), "random") == 0) result.source = wrenRandomSource();
+    if (strcmp(nameString->value, "random") == 0) result.source = wrenRandomSource();
 #endif
   }
   
@@ -915,16 +829,6 @@ static WrenInterpretResult runInterpreter(WrenVM* vm, register ObjFiber* fiber)
   vm->fiber = fiber;
   fiber->state = FIBER_ROOT;
 
-#if TRACE_SCRIPT_RELOAD
-  traceReloadVm(vm, "runInterpreter:enter",
-                (fiber && fiber->frames && fiber->numFrames > 0 &&
-                 fiber->frames[0].closure && fiber->frames[0].closure->fn &&
-                 fiber->frames[0].closure->fn->module && fiber->frames[0].closure->fn->module->name)
-                    ? fiber->frames[0].closure->fn->module->name->value
-                    : "",
-                -1, -1);
-#endif
-
   // Hoist these into local variables. They are accessed frequently in the loop
   // but assigned less frequently. Keeping them in locals and updating them when
   // a call frame has been pushed or popped gives a large speed boost.
@@ -932,7 +836,6 @@ static WrenInterpretResult runInterpreter(WrenVM* vm, register ObjFiber* fiber)
   register Value* stackStart;
   register uint8_t* ip;
   register ObjFn* fn;
-  int traceDispatchCount = 0;
 
   // These macros are designed to only be invoked within this function.
   #define PUSH(value)  (*fiber->stackTop++ = value)
@@ -999,21 +902,7 @@ static WrenInterpretResult runInterpreter(WrenVM* vm, register ObjFiber* fiber)
       do                                                                       \
       {                                                                        \
         DEBUG_TRACE_INSTRUCTIONS();                                            \
-        uint8_t opcode = READ_BYTE();                                          \
-        instruction = (Code)opcode;                                            \
-        if (traceDispatchCount < kTraceReloadOpcodeLimit &&                    \
-            traceReloadIsUserModule((fn && fn->module && fn->module->name)     \
-                                        ? fn->module->name->value : ""))      \
-        {                                                                      \
-          traceReloadVmOpcode(vm,                                              \
-                              (fn && fn->module && fn->module->name)           \
-                                  ? fn->module->name->value : "",            \
-                              (int)(ip - fn->code.data - 1),                   \
-                              opcode,                                          \
-                              traceDispatchCount);                             \
-          traceDispatchCount++;                                                \
-        }                                                                      \
-        goto *dispatchTable[instruction];                                      \
+        goto *dispatchTable[instruction = (Code)READ_BYTE()];                  \
       } while (false)
 
   #else
@@ -1021,22 +910,7 @@ static WrenInterpretResult runInterpreter(WrenVM* vm, register ObjFiber* fiber)
   #define INTERPRET_LOOP                                                       \
       loop:                                                                    \
         DEBUG_TRACE_INSTRUCTIONS();                                            \
-        {                                                                      \
-          uint8_t opcode = READ_BYTE();                                        \
-          instruction = (Code)opcode;                                          \
-            if (traceDispatchCount < kTraceReloadOpcodeLimit &&                  \
-              traceReloadIsUserModule((fn && fn->module && fn->module->name)   \
-                                          ? fn->module->name->value : ""))    \
-          {                                                                    \
-            traceReloadVmOpcode(vm,                                            \
-                                (fn && fn->module && fn->module->name)         \
-                                    ? fn->module->name->value : "",          \
-                                (int)(ip - fn->code.data - 1),                 \
-                                opcode,                                        \
-                                traceDispatchCount);                           \
-            traceDispatchCount++;                                              \
-          }                                                                    \
-          switch (instruction)
+        switch (instruction = (Code)READ_BYTE())
 
   #define CASE_CODE(name)  case CODE_##name
   #define DISPATCH()       goto loop
@@ -1464,51 +1338,20 @@ static WrenInterpretResult runInterpreter(WrenVM* vm, register ObjFiber* fiber)
     
     CASE_CODE(IMPORT_MODULE):
     {
-#if TRACE_SCRIPT_RELOAD
-      Value moduleNameValue = fn->constants.data[READ_SHORT()];
-      ObjString* moduleNameString = AS_STRING(moduleNameValue);
-      traceReloadVm(vm, "runInterpreter:import-module:pre-import",
-                    moduleNameString ? moduleNameString->value : "",
-                    fn && fn->module ? fn->module->variables.count : -1,
-                    fn && fn->module ? fn->module->variableNames.count : -1);
-      PUSH(importModule(vm, moduleNameValue));
-#else
       // Make a slot on the stack for the module's fiber to place the return
       // value. It will be popped after this fiber is resumed. Store the
       // imported module's closure in the slot in case a GC happens when
       // invoking the closure.
       PUSH(importModule(vm, fn->constants.data[READ_SHORT()]));
-#endif
       if (wrenHasError(fiber)) RUNTIME_ERROR();
-
-#if TRACE_SCRIPT_RELOAD
-      traceReloadVm(vm, IS_CLOSURE(PEEK())
-                          ? "runInterpreter:import-module:got-closure"
-                          : "runInterpreter:import-module:got-module",
-                    moduleNameString ? moduleNameString->value : "",
-                    fn && fn->module ? fn->module->variables.count : -1,
-                    fn && fn->module ? fn->module->variableNames.count : -1);
-#endif
       
       // If we get a closure, call it to execute the module body.
       if (IS_CLOSURE(PEEK()))
       {
         STORE_FRAME();
         ObjClosure* closure = AS_CLOSURE(PEEK());
-#if TRACE_SCRIPT_RELOAD
-        traceReloadVm(vm, "runInterpreter:import-module:pre-call",
-                      moduleNameString ? moduleNameString->value : "",
-                      fn && fn->module ? fn->module->variables.count : -1,
-                      fn && fn->module ? fn->module->variableNames.count : -1);
-#endif
         wrenCallFunction(vm, fiber, closure, 1);
         LOAD_FRAME();
-#if TRACE_SCRIPT_RELOAD
-        traceReloadVm(vm, "runInterpreter:import-module:post-call",
-                      (fn && fn->module && fn->module->name) ? fn->module->name->value : "",
-                      fn && fn->module ? fn->module->variables.count : -1,
-                      fn && fn->module ? fn->module->variableNames.count : -1);
-#endif
       }
       else
       {
@@ -1524,21 +1367,8 @@ static WrenInterpretResult runInterpreter(WrenVM* vm, register ObjFiber* fiber)
     {
       Value variable = fn->constants.data[READ_SHORT()];
       ASSERT(vm->lastModule != NULL, "Should have already imported module.");
-#if TRACE_SCRIPT_RELOAD
-      traceReloadVm(vm, "runInterpreter:import-variable:pre-get",
-                    (vm->lastModule && vm->lastModule->name) ? vm->lastModule->name->value : "",
-                    vm->lastModule ? vm->lastModule->variables.count : -1,
-                    vm->lastModule ? vm->lastModule->variableNames.count : -1);
-#endif
       Value result = getModuleVariable(vm, vm->lastModule, variable);
       if (wrenHasError(fiber)) RUNTIME_ERROR();
-
-#if TRACE_SCRIPT_RELOAD
-      traceReloadVm(vm, "runInterpreter:import-variable:post-get",
-                    (vm->lastModule && vm->lastModule->name) ? vm->lastModule->name->value : "",
-                    vm->lastModule ? vm->lastModule->variables.count : -1,
-                    vm->lastModule ? vm->lastModule->variableNames.count : -1);
-#endif
 
       PUSH(result);
       DISPATCH();
@@ -1588,7 +1418,6 @@ WrenHandle* wrenMakeCallHandle(WrenVM* vm, const char* signature)
   // Add the signatue to the method table.
   int method =  wrenSymbolTableEnsure(vm, &vm->methodNames,
                                       signature, signatureLength);
-  ASSERT(method <= MAX_METHODS, "Method limit reached.");
   
   // Create a little stub function that assumes the arguments are on the stack
   // and calls the method.
@@ -1681,102 +1510,16 @@ void wrenReleaseHandle(WrenVM* vm, WrenHandle* handle)
   DEALLOCATE(vm, handle);
 }
 
-bool wrenUnloadModule(WrenVM* vm, const char* module)
-{
-  if (module == NULL) return false;
-  Value name = wrenNewString(vm, module);
-  wrenPushRoot(vm, AS_OBJ(name));
-  Value removed = wrenMapRemoveKey(vm, vm->modules, name);
-  wrenPopRoot(vm);
-  return !IS_UNDEFINED(removed);
-}
-
-// Reset a previously-loaded module so it can be reloaded with fresh source.
-// Keeps the ObjModule in vm->modules (avoiding dangling-pointer hazards) but
-// wipes its variable/symbol tables and re-imports core (built-in) variables so
-// the compiler sees a clean slate.  Returns false if the module is not loaded.
-bool wrenResetModule(WrenVM* vm, const char* module)
-{
-  if (module == NULL) return false;
-#if TRACE_SCRIPT_RELOAD
-  traceReloadVm(vm, "resetModule:enter", module, -1, -1);
-#endif
-  Value name = wrenNewString(vm, module);
-  wrenPushRoot(vm, AS_OBJ(name));
-
-  Value moduleValue = wrenMapGet(vm->modules, name);
-  if (IS_UNDEFINED(moduleValue))
-  {
-    wrenPopRoot(vm);
-    return false;
-  }
-
-  ObjModule* mod = AS_MODULE(moduleValue);
-#if TRACE_SCRIPT_RELOAD
-  traceReloadVm(vm, "resetModule:found", module,
-                mod ? mod->variables.count : -1,
-                mod ? mod->variableNames.count : -1);
-#endif
-
-  // Null out every variable value so the GC can collect the old closures,
-  // maps, and lists on the next collection pass.
-  for (int i = 0; i < mod->variables.count; i++)
-    mod->variables.data[i] = NULL_VAL;
-
-  // Reset counts without freeing backing buffers (avoids realloc churn).
-  // Preserve the existing symbol table storage: the compiler will append new
-  // ObjString* entries as it rebuilds the module, and blanking the backing
-  // pointers here can corrupt later symbol-table operations on larger reloads.
-  mod->variables.count = 0;
-  mod->variableNames.count = 0;
-#if TRACE_SCRIPT_RELOAD
-  traceReloadVm(vm, "resetModule:post-clear", module,
-                mod ? mod->variables.count : -1,
-                mod ? mod->variableNames.count : -1);
-#endif
-
-  // Re-import core (built-in) variables (Num, String, Bool, etc.) exactly as
-  // compileInModule does when creating a fresh module.
-  ObjModule* coreModule = getModule(vm, NULL_VAL);
-  for (int i = 0; i < coreModule->variables.count; i++)
-  {
-    wrenDefineVariable(vm, mod,
-                       coreModule->variableNames.data[i]->value,
-                       coreModule->variableNames.data[i]->length,
-                       coreModule->variables.data[i], NULL);
-  }
-#if TRACE_SCRIPT_RELOAD
-  traceReloadVm(vm, "resetModule:post-core-import", module,
-                mod ? mod->variables.count : -1,
-                mod ? mod->variableNames.count : -1);
-#endif
-
-  wrenPopRoot(vm);
-  return true;
-}
-
 WrenInterpretResult wrenInterpret(WrenVM* vm, const char* module,
                                   const char* source)
 {
-#if TRACE_SCRIPT_RELOAD
-  traceReloadVm(vm, "interpret:enter", module, -1, -1);
-#endif
   ObjClosure* closure = wrenCompileSource(vm, module, source, false, true);
   if (closure == NULL) return WREN_RESULT_COMPILE_ERROR;
-#if TRACE_SCRIPT_RELOAD
-  traceReloadVm(vm, "interpret:post-compile-source", module, -1, -1);
-#endif
   
   wrenPushRoot(vm, (Obj*)closure);
-#if TRACE_SCRIPT_RELOAD
-  traceReloadVm(vm, "interpret:pre-new-fiber", module, -1, -1);
-#endif
   ObjFiber* fiber = wrenNewFiber(vm, closure);
   wrenPopRoot(vm); // closure.
   vm->apiStack = NULL;
-#if TRACE_SCRIPT_RELOAD
-  traceReloadVm(vm, "interpret:post-new-fiber", module, -1, -1);
-#endif
 
   return runInterpreter(vm, fiber);
 }
@@ -1784,24 +1527,15 @@ WrenInterpretResult wrenInterpret(WrenVM* vm, const char* module,
 ObjClosure* wrenCompileSource(WrenVM* vm, const char* module, const char* source,
                             bool isExpression, bool printErrors)
 {
-#if TRACE_SCRIPT_RELOAD
-  traceReloadVm(vm, "compileSource:enter", module, -1, -1);
-#endif
   Value nameValue = NULL_VAL;
   if (module != NULL)
   {
     nameValue = wrenNewString(vm, module);
     wrenPushRoot(vm, AS_OBJ(nameValue));
-#if TRACE_SCRIPT_RELOAD
-    traceReloadVm(vm, "compileSource:post-name-string", module, -1, -1);
-#endif
   }
   
   ObjClosure* closure = compileInModule(vm, nameValue, source,
                                         isExpression, printErrors);
-#if TRACE_SCRIPT_RELOAD
-  traceReloadVm(vm, "compileSource:post-compileInModule", module, -1, -1);
-#endif
 
   if (module != NULL) wrenPopRoot(vm); // nameValue.
   return closure;

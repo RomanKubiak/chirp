@@ -22,7 +22,7 @@ bool prepareStoredWrenScriptsOnBoot();
 size_t listStoredWrenScripts(String *namesOut, size_t maxNames);
 bool runStoredWrenScript(const char *name);
 bool runWrenUserScriptSource(const char *scriptName, const char *source);
-const char *bootDisplayScriptName();
+const char *bootScriptName();
 
 // ── Runtime script load telemetry ────────────────────────────────────────────
 const char *lastLoadedWrenScriptName();
