@@ -37,16 +37,63 @@ var makeValueBar = Fn.new { |value, width|
 }
 
 var caseAdjustLabel = Fn.new { |text, uppercase|
-    var out = ""
-    for (i in 0...text.count) {
-        var ch = text.byteAt(i)
-        if (uppercase) {
-            if (ch >= 97 && ch <= 122) ch = ch - 32
-        } else {
-            if (ch >= 65 && ch <= 90) ch = ch + 32
-        }
-        out = out + String.fromByte(ch)
+    var out = text
+    if (uppercase) {
+        out = out.replace("a", "A")
+        out = out.replace("b", "B")
+        out = out.replace("c", "C")
+        out = out.replace("d", "D")
+        out = out.replace("e", "E")
+        out = out.replace("f", "F")
+        out = out.replace("g", "G")
+        out = out.replace("h", "H")
+        out = out.replace("i", "I")
+        out = out.replace("j", "J")
+        out = out.replace("k", "K")
+        out = out.replace("l", "L")
+        out = out.replace("m", "M")
+        out = out.replace("n", "N")
+        out = out.replace("o", "O")
+        out = out.replace("p", "P")
+        out = out.replace("q", "Q")
+        out = out.replace("r", "R")
+        out = out.replace("s", "S")
+        out = out.replace("t", "T")
+        out = out.replace("u", "U")
+        out = out.replace("v", "V")
+        out = out.replace("w", "W")
+        out = out.replace("x", "X")
+        out = out.replace("y", "Y")
+        out = out.replace("z", "Z")
+        return out
     }
+
+    out = out.replace("A", "a")
+    out = out.replace("B", "b")
+    out = out.replace("C", "c")
+    out = out.replace("D", "d")
+    out = out.replace("E", "e")
+    out = out.replace("F", "f")
+    out = out.replace("G", "g")
+    out = out.replace("H", "h")
+    out = out.replace("I", "i")
+    out = out.replace("J", "j")
+    out = out.replace("K", "k")
+    out = out.replace("L", "l")
+    out = out.replace("M", "m")
+    out = out.replace("N", "n")
+    out = out.replace("O", "o")
+    out = out.replace("P", "p")
+    out = out.replace("Q", "q")
+    out = out.replace("R", "r")
+    out = out.replace("S", "s")
+    out = out.replace("T", "t")
+    out = out.replace("U", "u")
+    out = out.replace("V", "v")
+    out = out.replace("W", "w")
+    out = out.replace("X", "x")
+    out = out.replace("Y", "y")
+    out = out.replace("Z", "z")
     return out
 }
 
@@ -123,10 +170,9 @@ var drawStatus = Fn.new {
 
 for (key in instrumentOrder) {
     var parts = key.split(".")
-    var family = parts[0] == "tr808" ? "808" : "909"
     instrumentShortByKey[key] = parts[1]
     var label = caseAdjustLabel.call(parts[1], parts[0] == "tr808")
-    instrumentDisplayByKey[key] = "%(family):%(label)"
+    instrumentDisplayByKey[key] = label
 }
 
 for (i in 0...instrumentOrder.count) {
